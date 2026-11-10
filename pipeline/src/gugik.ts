@@ -33,6 +33,27 @@ const DELTA = [
   (4279 / 630) * N_ ** 4,
 ];
 
+const ALPHA = [
+  N_ / 2 - (2 / 3) * N_ ** 2 + (5 / 16) * N_ ** 3 + (41 / 180) * N_ ** 4,
+  (13 / 48) * N_ ** 2 - (3 / 5) * N_ ** 3 + (557 / 1440) * N_ ** 4,
+  (61 / 240) * N_ ** 3 - (103 / 140) * N_ ** 4,
+  (49561 / 161280) * N_ ** 4,
+];
+const E_ = Math.sqrt(F * (2 - F));
+
+/** [lon, lat] in degrees -> PUWG 1992 [easting, northing] (m). */
+export function lonLatToPuwg92(lon: number, lat: number): [number, number] {
+  const phi = (lat * Math.PI) / 180, lam = ((lon - LON0) * Math.PI) / 180;
+  const t = Math.sinh(Math.atanh(Math.sin(phi)) - E_ * Math.atanh(E_ * Math.sin(phi)));
+  const xi1 = Math.atan2(t, Math.cos(lam)), eta1 = Math.atanh(Math.sin(lam) / Math.sqrt(1 + t * t));
+  let xi = xi1, eta = eta1;
+  for (let j = 1; j <= 4; j++) {
+    xi += ALPHA[j - 1] * Math.sin(2 * j * xi1) * Math.cosh(2 * j * eta1);
+    eta += ALPHA[j - 1] * Math.cos(2 * j * xi1) * Math.sinh(2 * j * eta1);
+  }
+  return [FE + K0 * M_FACTOR * eta, FN + K0 * M_FACTOR * xi];
+}
+
 /** PUWG 1992 easting/northing (m) -> [lon, lat] in degrees. */
 export function puwg92ToLonLat(easting: number, northing: number): [number, number] {
   const xi = (northing - FN) / (K0 * M_FACTOR), eta = (easting - FE) / (K0 * M_FACTOR);

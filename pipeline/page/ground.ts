@@ -7,7 +7,7 @@
 
 type P2 = [number, number];
 export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][] }
-interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
+interface Objects { b: Array<[P2[], number, number, number | null]>; t: number[][] }
 
 const FILL: Record<string, string> = {
   residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", campus: "#e1dacb",

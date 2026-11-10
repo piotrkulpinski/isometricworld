@@ -12,11 +12,13 @@
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
  *                                        coastline, rail (bbox + margin, drawn onto the terrain)
+ * data/raw/gugik/{nmt,nmpt}/*.asc       Poland: GUGiK terrain (1 m) and surface (0.5 m) models
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
+import { fetchElevation } from "./elevation.ts";
 import { fetchGugik } from "./gugik.ts";
 import { RAW } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -89,7 +91,12 @@ if (source?.kind === "tel-aviv") {
   if (!existsSync(join(dir, "tlv_canopy.geojson")))
     writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
 }
-if (source?.kind === "gugik") fetchGugik(source.teryt, area.bbox, dir);
+if (source?.kind === "gugik") {
+  fetchGugik(source.teryt, area.bbox, dir);
+  // terrain (bare earth) for the ground, surface for tree heights; the ground step reads a margin around the area
+  await fetchElevation("NMT", area.bbox, 0.02);
+  await fetchElevation("NMPT", area.bbox, 0.001);
+}
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;

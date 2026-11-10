@@ -139,8 +139,8 @@ heightTarget.texture.generateMipmaps = false;
 type P2 = [number, number];
 export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
-  t: Array<[number, number, number, number]>;      // x, y, radius, crown height
-  m?: Array<[Array<[number, number[]]>, number]>;   // LoD2 meshes: faces [kind 1 wall / 2 roof, flat ENU xyz], style
+  t: number[][];                                    // x, y, radius, crown height, conifer (1, optional)
+  m?: Array<[Array<[number, number[]]>, number, (number[] | null)?]>; // LoD2 meshes: faces [kind 1 wall / 2 roof, flat ENU xyz], style, roof rgb
 }
 
 /** wall, roof colours per style (see scene.ts): bauhaus, residential, public, tower, shed, modern */
@@ -203,6 +203,18 @@ const buildingMaterial = new THREE.ShaderMaterial({
 });
 /** Pitched roofs of LoD2 meshes: clay tile; flat parts keep the style's roof colour. */
 const TILE_ROOF = [0.66, 0.36, 0.26];
+const REGION = REGIONS[activeRegion()];
+/** Rooftop solar water heaters and AC units: a Tel Aviv sight, not a Polish one. */
+const ROOF_CLUTTER = REGION.buildings?.kind === "tel-aviv";
+/** Historic tenement (kamienica) plaster colours for Polish style-1 buildings, one per building. */
+const TENEMENT_WALLS = [
+  [0.93, 0.87, 0.72], [0.91, 0.8, 0.6], [0.86, 0.76, 0.62], [0.92, 0.84, 0.78], [0.84, 0.86, 0.8],
+  [0.9, 0.9, 0.86], [0.88, 0.78, 0.7], [0.8, 0.82, 0.84], [0.94, 0.9, 0.8], [0.86, 0.72, 0.58],
+];
+function wallColour(style: number, x: number, y: number) {
+  if (REGION.flora !== "central-european" || style !== 1) return (PALETTE[style] ?? PALETTE[0])[0];
+  return TENEMENT_WALLS[Math.floor(rand(Math.round(x), Math.round(y)) * TENEMENT_WALLS.length) % TENEMENT_WALLS.length];
+}
 
 /**
  * Tree species of the region's streets and parks, as placeholder colours and shapes the paint step
@@ -232,7 +244,7 @@ const CENTRAL_EUROPEAN: Species[] = [
   ["black locust", 8, [0.62, 0.7, 0.3], 0.95, 0.7, false],
   ["birch", 6, [0.7, 0.74, 0.42], 0.75, 1.1, false],
   ["oak", 8, [0.24, 0.34, 0.12], 1.15, 0.85, false],
-  ["spruce", 3, [0.1, 0.24, 0.2], 0.6, 1.6, false],
+  ["spruce", 0, [0.1, 0.24, 0.2], 0.6, 1.6, false], // only where OSM tags the tree needleleaved
 ];
 const SPECIES = REGIONS[activeRegion()].flora === "central-european" ? CENTRAL_EUROPEAN : MEDITERRANEAN;
 const SPECIES_TOTAL = SPECIES.reduce((t, s) => t + s[1], 0);
@@ -299,7 +311,7 @@ function buildObjects(data: TileObjects) {
     // sit on the highest ground under the footprint; walls reach 1 m below the lowest so slopes never show a gap
     const gs = ring.map(([x, y]) => ground(x, y));
     const top = Math.max(...gs) + h, g = Math.min(...gs) - 1;
-    const [wall, roof] = PALETTE[style] ?? PALETTE[0];
+    const roof = (PALETTE[style] ?? PALETTE[0])[1], wall = wallColour(style, ring[0][0], ring[0][1]);
     const isTower = style;
     let along = 0;
     for (let k = 0; k < ring.length; k++) {
@@ -319,7 +331,7 @@ function buildObjects(data: TileObjects) {
       pos.push(ring[v][0], ring[v][1], top); nor.push(0, 0, 1); col.push(...roof); fac.push(0, -1000); tow.push(0);
     }
     // rooftop clutter on flat residential roofs: solar water heaters (panel + tank), AC units
-    if (style !== 3 && style !== 4 && h > 6) {
+    if (ROOF_CLUTTER && style !== 3 && style !== 4 && h > 6) {
       const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
       const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
       const area = Math.abs(THREE.ShapeUtils.area(ring.map(([x, y]) => new THREE.Vector2(x, y))));
@@ -341,18 +353,18 @@ function buildObjects(data: TileObjects) {
       }
     }
   });
-  // LoD2 meshes (real walls and roofs). Their elevations are surveyed; the terrain is a smoothed DEM,
-  // so lift each building onto the highest terrain under it and pull its wall bottoms down below the
-  // lowest, like the prisms above.
-  for (const [faces, style] of data.m ?? []) {
+  // LoD2 meshes (real walls and roofs) keep their surveyed elevations: the terrain under them comes from
+  // the same survey (GUGiK NMT). Wall bottoms reach 1 m below the lowest terrain under the building so
+  // a slope never shows a gap.
+  for (const [faces, style, roofRgb] of data.m ?? []) {
     let zMin = Infinity, cx = 0, cy = 0, n = 0;
     for (const [, v] of faces) for (let i = 0; i < v.length; i += 3) { zMin = Math.min(zMin, v[i + 2]); cx += v[i]; cy += v[i + 1]; n++; }
     cx /= n; cy /= n;
     const gs: number[] = [];
     for (const [k, v] of faces) if (k === 1) for (let i = 0; i < v.length; i += 3) if (v[i + 2] < zMin + 0.5) gs.push(ground(v[i], v[i + 1]));
     if (!gs.length) gs.push(ground(cx, cy));
-    const base = Math.max(...gs), dz = base - zMin, bottom = Math.min(...gs) - 1;
-    const [wall, roof] = PALETTE[style] ?? PALETTE[0];
+    const base = zMin, dz = 0, bottom = Math.min(zMin, ...gs) - 1;
+    const roof = (PALETTE[style] ?? PALETTE[0])[1], wall = wallColour(style, cx, cy);
     for (const [k, v] of faces) {
       const pts: number[][] = [];
       for (let i = 0; i < v.length; i += 3) pts.push([v[i], v[i + 1], k === 1 && v[i + 2] < zMin + 0.5 ? bottom : v[i + 2] + dz]);
@@ -372,7 +384,7 @@ function buildObjects(data: TileObjects) {
       const ax = Math.abs(nx) > Math.abs(ny) && Math.abs(nx) > Math.abs(nz) ? 0 : Math.abs(ny) > Math.abs(nz) ? 1 : 2;
       const [u, w] = ax === 0 ? [1, 2] : ax === 1 ? [0, 2] : [0, 1];
       const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p[u], p[w])), []);
-      const c = k === 2 ? (nz < 0.97 ? TILE_ROOF : roof) : wall;
+      const c = k === 2 ? (roofRgb ?? (nz < 0.97 ? TILE_ROOF : roof)) : wall;
       const hx = -ny, hy = nx; // horizontal direction along a wall
       for (const t of tris) for (const i of t) {
         const p = pts[i];
@@ -394,8 +406,9 @@ function buildObjects(data: TileObjects) {
     const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
     const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.45, 0.36, 0.28);
-    data.t.forEach(([x, y, r, ch], i) => {
-      const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r);
+    const conifer = SPECIES.find((sp) => sp[0] === "spruce");
+    data.t.forEach(([x, y, r, ch, needle], i) => {
+      const g = ground(x, y), [name, , col, sxy, sz, palm] = needle && conifer ? conifer : species(x, y, r);
       if (palm) {
         // small star crown high on a thin trunk
         const top = g + Math.max(ch, 8) + (name === "fan palm" ? 6 : 0); // Washingtonias tower over the rest

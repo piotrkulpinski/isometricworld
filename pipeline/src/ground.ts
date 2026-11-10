@@ -16,7 +16,9 @@ import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { camera, ecefToEnu, llhToEcef } from "./camera.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
+import { elevationSampler } from "./elevation.ts";
 import { seaH } from "./heights.ts";
+import { REGIONS } from "./places.ts";
 import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
 
 type P2 = [number, number];
@@ -294,6 +296,19 @@ function filter(a: Float32Array, r: number, op: "min" | "max" | "mean") {
 // bare earth: opening removes blocks up to ~200 m across, then smooth twice (≈ gaussian)
 h = filter(filter(h, 10, "min"), 10, "max");
 h = filter(filter(h, 4, "mean"), 4, "mean");
+
+// Poland: GUGiK's 1 m bare-earth terrain (NMT) replaces the filtered surface model wherever it has data.
+// The opening above erases hills narrower than ~200 m (Wawel stood 16 m too low).
+if (REGIONS[area.region].buildings?.kind === "gugik") {
+  const nmt = elevationSampler("NMT");
+  let used = 0;
+  for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
+    const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP;
+    const v = nmt(LAT0 + y / mLat, LON0 + x / mLon);
+    if (!Number.isNaN(v)) { h[iy * grid.nx + ix] = v; used++; }
+  }
+  console.log(`  terrain: GUGiK NMT at ${((100 * used) / n).toFixed(0)}% of grid nodes`);
+}
 
 // water: sea at 0 m; lakes/rivers at their lowest surrounding ground; land kept above the sea
 const isWater = new Uint8Array(n);
