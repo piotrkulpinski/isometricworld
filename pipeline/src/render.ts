@@ -36,7 +36,7 @@ const area = openArea(areaName);
 
 const BUILDING_CREDIT = {
   "tel-aviv": "Tel Aviv-Yafo Municipality open data",
-  "gugik-lod1": "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, geoportal.gov.pl), CC BY 4.0",
+  "gugik": "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, geoportal.gov.pl), CC BY 4.0",
 };
 const buildingSource = REGIONS[area.region].buildings?.kind;
 export const ATTRIBUTIONS = [

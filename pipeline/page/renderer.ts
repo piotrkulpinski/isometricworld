@@ -140,6 +140,7 @@ type P2 = [number, number];
 export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
   t: Array<[number, number, number, number]>;      // x, y, radius, crown height
+  m?: Array<[Array<[number, number[]]>, number]>;   // LoD2 meshes: faces [kind 1 wall / 2 roof, flat ENU xyz], style
 }
 
 /** wall, roof colours per style (see scene.ts): bauhaus, residential, public, tower, shed, modern */
@@ -198,7 +199,10 @@ const buildingMaterial = new THREE.ShaderMaterial({
       gl_FragColor = vec4(c * light, 1.0);
     }`,
   uniforms: { sun: { value: SUN } },
+  side: THREE.DoubleSide, // LoD2 faces come in either winding
 });
+/** Pitched roofs of LoD2 meshes: clay tile; flat parts keep the style's roof colour. */
+const TILE_ROOF = [0.66, 0.36, 0.26];
 
 /**
  * Tree species of the region's streets and parks, as placeholder colours and shapes the paint step
@@ -337,6 +341,46 @@ function buildObjects(data: TileObjects) {
       }
     }
   });
+  // LoD2 meshes (real walls and roofs). Their elevations are surveyed; the terrain is a smoothed DEM,
+  // so lift each building onto the highest terrain under it and pull its wall bottoms down below the
+  // lowest, like the prisms above.
+  for (const [faces, style] of data.m ?? []) {
+    let zMin = Infinity, cx = 0, cy = 0, n = 0;
+    for (const [, v] of faces) for (let i = 0; i < v.length; i += 3) { zMin = Math.min(zMin, v[i + 2]); cx += v[i]; cy += v[i + 1]; n++; }
+    cx /= n; cy /= n;
+    const gs: number[] = [];
+    for (const [k, v] of faces) if (k === 1) for (let i = 0; i < v.length; i += 3) if (v[i + 2] < zMin + 0.5) gs.push(ground(v[i], v[i + 1]));
+    if (!gs.length) gs.push(ground(cx, cy));
+    const base = Math.max(...gs), dz = base - zMin, bottom = Math.min(...gs) - 1;
+    const [wall, roof] = PALETTE[style] ?? PALETTE[0];
+    for (const [k, v] of faces) {
+      const pts: number[][] = [];
+      for (let i = 0; i < v.length; i += 3) pts.push([v[i], v[i + 1], k === 1 && v[i + 2] < zMin + 0.5 ? bottom : v[i + 2] + dz]);
+      if (pts.length < 3) continue;
+      // Newell normal; walls face away from the building centre, roofs face up
+      let nx = 0, ny = 0, nz = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
+      }
+      const L = Math.hypot(nx, ny, nz);
+      if (L < 1e-6) continue;
+      nx /= L; ny /= L; nz /= L;
+      const mx = pts.reduce((t, p) => t + p[0], 0) / pts.length, my = pts.reduce((t, p) => t + p[1], 0) / pts.length;
+      if (k === 2 ? nz < 0 : nx * (mx - cx) + ny * (my - cy) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      // triangulate in the plane: drop the normal's largest axis
+      const ax = Math.abs(nx) > Math.abs(ny) && Math.abs(nx) > Math.abs(nz) ? 0 : Math.abs(ny) > Math.abs(nz) ? 1 : 2;
+      const [u, w] = ax === 0 ? [1, 2] : ax === 1 ? [0, 2] : [0, 1];
+      const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p[u], p[w])), []);
+      const c = k === 2 ? (nz < 0.97 ? TILE_ROOF : roof) : wall;
+      const hx = -ny, hy = nx; // horizontal direction along a wall
+      for (const t of tris) for (const i of t) {
+        const p = pts[i];
+        pos.push(p[0], p[1], p[2]); nor.push(nx, ny, nz); col.push(...c);
+        if (k === 1) { fac.push(p[0] * hx + p[1] * hy, p[2] - base); tow.push(style); } else { fac.push(0, -1000); tow.push(0); }
+      }
+    }
+  }
   if (pos.length) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));

@@ -6,7 +6,8 @@
  * data/raw/<area>/tlv_buildings.geojson  Tel Aviv-Yafo GIS layer 513: footprints, 2019 surveyed
  *                                        height above ground, base/roof elevation, floors
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
- * data/raw/<area>/gugik_buildings.json   Poland: GUGiK LoD1 2024 footprints, LiDAR heights, ground Z
+ * data/raw/<area>/gugik_lod2.json        Poland: GUGiK LoD2 2017 building meshes (walls, roofs)
+ * data/raw/<area>/gugik_buildings.json   Poland: GUGiK LoD1 2024 prisms (buildings newer than LoD2)
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -88,8 +89,7 @@ if (source?.kind === "tel-aviv") {
   if (!existsSync(join(dir, "tlv_canopy.geojson")))
     writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
 }
-if (source?.kind === "gugik-lod1" && !existsSync(join(dir, "gugik_buildings.json")))
-  fetchGugik(source.teryt, area.bbox, join(dir, "gugik_buildings.json"));
+if (source?.kind === "gugik") fetchGugik(source.teryt, area.bbox, dir);
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;

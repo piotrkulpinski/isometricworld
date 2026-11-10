@@ -26,8 +26,8 @@ export interface Region {
   geoid: number;
   /** Typical ground ellipsoid height (m): area outlines, and the band the scene bins objects in. */
   groundH: number;
-  /** Building source beside OSM: Tel Aviv-Yafo municipal GIS, or GUGiK LoD1 3D models for a Polish powiat (TERYT). */
-  buildings?: { kind: "tel-aviv" } | { kind: "gugik-lod1"; teryt: string[] };
+  /** Building source beside OSM: Tel Aviv-Yafo municipal GIS, or GUGiK LoD2 + LoD1 3D models for Polish powiats (TERYT). */
+  buildings?: { kind: "tel-aviv" } | { kind: "gugik"; teryt: string[] };
   /** Tree palette the renderer colour-codes crowns with (see page/renderer.ts and style/trees*.png). */
   flora: "mediterranean" | "central-european";
 }
@@ -82,7 +82,7 @@ export const REGIONS: Record<string, Region> = {
     ],
     geoid: 39.8,
     groundH: 235, // Vistula ~198 m, Rynek ~219 m, Wawel ~228 m above sea level, + geoid
-    buildings: { kind: "gugik-lod1", teryt: ["1261"] }, // powiat m. Kraków
+    buildings: { kind: "gugik", teryt: ["1261"] }, // powiat m. Kraków
     flora: "central-european",
   },
 };

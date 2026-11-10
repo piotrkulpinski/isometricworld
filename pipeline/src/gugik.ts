@@ -1,9 +1,11 @@
 /**
  * GUGiK 3D building models (Poland's national mapping agency, CC BY 4.0).
  *
- * LoD1 2024: one prism per BDOT10k building, with `measuredHeight` from the LiDAR survey (median of
- * the points inside the footprint) and the ground elevation as the solid's lowest Z. Downloaded per
- * powiat (county) as a zip of CityGML sheets in EPSG:2180 (PUWG 1992) + EVRF2007 heights.
+ * LoD2 2017: ground, wall and roof faces per BDOT10k building, roofs fitted to airborne LiDAR.
+ * LoD1 2024: one prism per building, with `measuredHeight` the median of the LiDAR points inside the
+ * footprint (so towers and steep roofs come out flat): only used for buildings LoD2 lacks.
+ * Both are downloaded per powiat (county) as zips of CityGML sheets in EPSG:2180 (PUWG 1992) +
+ * EVRF2007 heights.
  *
  * https://www.geoportal.gov.pl/pl/dane/inne-dane/modele-3d-budynkow/
  */
@@ -12,7 +14,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { RAW } from "./paths.ts";
 
-const LOD1 = (teryt: string) => `https://opendata.geoportal.gov.pl/InneDane/Budynki3D/LOD1/2024/12/${teryt}.zip`;
 
 // ---- EPSG:2180 (Transverse Mercator on GRS80, lon0 19°, k0 0.9993) -> WGS84 ------------------
 const A = 6378137, F = 1 / 298.257222101, K0 = 0.9993, LON0 = 19, FE = 500000, FN = -5300000;
@@ -47,36 +48,62 @@ export function puwg92ToLonLat(easting: number, northing: number): [number, numb
   return [LON0 + (lam * 180) / Math.PI, (phi * 180) / Math.PI];
 }
 
-/** One building: footprint ring [lon, lat][], height above ground (m), ground elevation (m, EVRF2007). */
+/** One LoD1 building: footprint ring [lon, lat][], height above ground (m), ground elevation (m, EVRF2007). */
 export interface GugikBuilding { id: string; ring: number[][]; h: number; z: number }
 
-/** Download and unpack a powiat's LoD1 sheets once (data/raw/gugik/lod1-<teryt>/). */
-function lod1Dir(teryt: string) {
-  const dir = join(RAW, "gugik", `lod1-${teryt}`);
-  if (existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".gml"))) return dir;
+/** One LoD2 face: 0 ground, 1 wall, 2 roof; points [lon, lat, elevation (m, EVRF2007)]. */
+export interface GugikFace { k: 0 | 1 | 2; pts: number[][] }
+/** One LoD2 building: its faces, footprint ring (largest ground face, [lon, lat][]) and lowest elevation. */
+export interface GugikMesh { id: string; faces: GugikFace[]; ring: number[][]; z: number; h: number }
+
+const DOWNLOAD = {
+  lod1: (teryt: string) => `https://opendata.geoportal.gov.pl/InneDane/Budynki3D/LOD1/2024/12/${teryt}.zip`,
+  lod2: (teryt: string) => `https://opendata.geoportal.gov.pl/InneDane/Budynki3D/LOD2/${teryt}_gml.zip`,
+};
+
+/** Download and unpack a powiat's sheets once (data/raw/gugik/<lod>-<teryt>/); returns the GML files. */
+function sheets(lod: "lod1" | "lod2", teryt: string) {
+  const dir = join(RAW, "gugik", `${lod}-${teryt}`);
+  const list = () => existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).filter((f) => f.endsWith(".gml")).map((f) => join(dir, f)) : [];
+  if (list().length) return list();
   mkdirSync(dir, { recursive: true });
-  const zip = join(RAW, "gugik", `lod1-${teryt}.zip`);
+  const zip = join(RAW, "gugik", `${lod}-${teryt}.zip`);
   if (!existsSync(zip)) {
-    console.log(`  gugik: downloading ${LOD1(teryt)}`);
-    execFileSync("curl", ["-sSfL", "-o", zip, LOD1(teryt)], { stdio: "inherit" });
+    console.log(`  gugik: downloading ${DOWNLOAD[lod](teryt)}`);
+    execFileSync("curl", ["-sSfL", "-o", zip, DOWNLOAD[lod](teryt)], { stdio: "inherit" });
   }
   execFileSync("unzip", ["-o", "-q", zip, "-d", dir], { stdio: "inherit" });
-  return dir;
+  return list();
+}
+
+/** Does a sheet's envelope (EPSG:2180 easting/northing) touch the bbox? Reads only the file's header. */
+function sheetTouches(xml: string, [s, w, n, e]: [number, number, number, number]) {
+  const m = /<gml:lowerCorner>([^<]+)<\/gml:lowerCorner>\s*<gml:upperCorner>([^<]+)</.exec(xml.slice(0, 4000));
+  if (!m) return true;
+  const [x0, y0] = m[1].trim().split(/\s+/).map(Number), [x1, y1] = m[2].trim().split(/\s+/).map(Number);
+  const [lo0, la0] = puwg92ToLonLat(x0, y0), [lo1, la1] = puwg92ToLonLat(x1, y1);
+  return !(Math.max(la0, la1) < s || Math.min(la0, la1) > n || Math.max(lo0, lo1) < w || Math.min(lo0, lo1) > e);
 }
 
 const BUILDING = /<bldg:Building gml:id="([^"]+)">([\s\S]*?)<\/bldg:Building>/g;
 const HEIGHT = /<bldg:measuredHeight[^>]*>([\d.]+)</;
 const POSLIST = /<gml:posList>([^<]+)<\/gml:posList>/g;
+const SURFACE = /<bldg:(GroundSurface|WallSurface|RoofSurface)\b[\s\S]*?<\/bldg:\1>/g;
+const RING = /<gml:exterior>([\s\S]*?)<\/gml:exterior>/g;
+const POS = /<gml:pos(?:List)?[^>]*>([^<]+)</g;
+
+const inBbox = (ring: number[][], [s, w, n, e]: [number, number, number, number]) =>
+  ring.some(([lon, lat]) => lat >= s && lat <= n && lon >= w && lon <= e);
 
 /**
- * Buildings of a powiat whose footprint touches the bbox [south, west, north, east].
+ * LoD1 buildings of a powiat whose footprint touches the bbox [south, west, north, east].
  * The footprint is the solid's lowest horizontal face (all Z equal to the minimum Z).
  */
-export function lod1Buildings(teryt: string, [s, w, n, e]: [number, number, number, number]): GugikBuilding[] {
+export function lod1Buildings(teryt: string, bbox: [number, number, number, number]): GugikBuilding[] {
   const out: GugikBuilding[] = [];
-  const dir = lod1Dir(teryt);
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".gml"))) {
-    const xml = readFileSync(join(dir, file), "utf8");
+  for (const file of sheets("lod1", teryt)) {
+    const xml = readFileSync(file, "utf8");
+    if (!sheetTouches(xml, bbox)) continue;
     for (const [, id, body] of xml.matchAll(BUILDING)) {
       const h = parseFloat(HEIGHT.exec(body)?.[1] ?? "");
       let foot: number[][] | null = null, zMin = Infinity;
@@ -88,16 +115,58 @@ export function lod1Buildings(teryt: string, [s, w, n, e]: [number, number, numb
       }
       if (!foot || !Number.isFinite(h)) continue;
       const ring = foot.map(([x, y]) => puwg92ToLonLat(x, y));
-      if (!ring.some(([lon, lat]) => lat >= s && lat <= n && lon >= w && lon <= e)) continue;
+      if (!inBbox(ring, bbox)) continue;
       out.push({ id, ring, h, z: zMin });
     }
   }
   return out;
 }
 
-/** Write the area's GUGiK buildings to data/raw/<area>/gugik_buildings.json. */
-export function fetchGugik(teryt: string[], bbox: [number, number, number, number], file: string) {
-  const b = teryt.flatMap((t) => lod1Buildings(t, bbox));
-  writeFileSync(file, JSON.stringify(b));
-  console.log(`  gugik lod1: ${b.length} buildings`);
+/**
+ * LoD2 buildings (2017, roofs from airborne LiDAR): every ground, wall and roof face, so towers,
+ * spires and pitched roofs keep their real shape.
+ */
+export function lod2Buildings(teryt: string, bbox: [number, number, number, number]): GugikMesh[] {
+  const out: GugikMesh[] = [];
+  for (const file of sheets("lod2", teryt)) {
+    const xml = readFileSync(file, "utf8");
+    if (!sheetTouches(xml, bbox)) continue;
+    for (const [, id, body] of xml.matchAll(BUILDING)) {
+      const faces: GugikFace[] = [];
+      for (const [surface, type] of body.matchAll(SURFACE)) {
+        const k = type === "GroundSurface" ? 0 : type === "WallSurface" ? 1 : 2;
+        for (const [, ring] of surface.matchAll(RING)) {
+          const v = [...ring.matchAll(POS)].flatMap(([, t]) => t.trim().split(/\s+/).map(Number)), pts: number[][] = [];
+          for (let i = 0; i + 2 < v.length; i += 3) pts.push([...puwg92ToLonLat(v[i], v[i + 1]), v[i + 2]]);
+          if (pts.length >= 4) faces.push({ k, pts: pts.slice(0, -1) }); // drop the closing point
+        }
+      }
+      const grounds = faces.filter((f) => f.k === 0);
+      if (!grounds.length) continue;
+      const ring = grounds.reduce((a, b) => (b.pts.length > a.pts.length ? b : a)).pts.map(([lon, lat]) => [lon, lat]);
+      if (!inBbox(ring, bbox)) continue;
+      const zs = faces.flatMap((f) => f.pts.map((p) => p[2]));
+      const z = Math.min(...zs);
+      out.push({ id, faces, ring, z, h: Math.max(...zs) - z });
+    }
+  }
+  return out;
+}
+
+/**
+ * Write the area's GUGiK buildings: LoD2 meshes (data/raw/<area>/gugik_lod2.json) and the LoD1 2024
+ * prisms (gugik_buildings.json), which fill in buildings put up after the 2017 LoD2 survey.
+ */
+export function fetchGugik(teryt: string[], bbox: [number, number, number, number], dir: string) {
+  const lod1 = join(dir, "gugik_buildings.json"), lod2 = join(dir, "gugik_lod2.json");
+  if (!existsSync(lod1)) {
+    const b = teryt.flatMap((t) => lod1Buildings(t, bbox));
+    writeFileSync(lod1, JSON.stringify(b));
+    console.log(`  gugik lod1: ${b.length} buildings`);
+  }
+  if (!existsSync(lod2)) {
+    const m = teryt.flatMap((t) => lod2Buildings(t, bbox));
+    writeFileSync(lod2, JSON.stringify(m));
+    console.log(`  gugik lod2: ${m.length} buildings`);
+  }
 }

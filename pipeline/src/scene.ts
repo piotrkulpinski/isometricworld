@@ -7,12 +7,13 @@
  * Output: data/derived/<area>/scene/<tx>_<ty>.json — objects visible in each render tile:
  *   b: buildings  [ring (ENU x,y pairs, CCW), height above ground, style, groundHint]
  *   t: tree crowns [x, y, radius, crown height above ground]
+ *   m: building meshes [faces: [kind (1 wall, 2 roof), flat ENU x,y,z…], style] (GUGiK LoD2)
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
-import type { GugikBuilding } from "./gugik.ts";
+import type { GugikBuilding, GugikMesh } from "./gugik.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 
@@ -116,11 +117,34 @@ for (const f of tlv.features) {
     tlvCover.push(ring);
   }
 }
-// … or GUGiK LoD1 (Poland): BDOT10k footprints, LiDAR median height, ground elevation (EVRF2007).
+// … or GUGiK (Poland). LoD2 2017 meshes first: real walls and roofs, so towers and spires keep their height.
+type Mesh = { faces: Array<[number, number[]]>; s: number; ring: P2[] };
+const meshes: Mesh[] = [];
+const lod2File = join(raw, "gugik_lod2.json");
+for (const b of existsSync(lod2File) ? readJson<GugikMesh[]>(lod2File) : []) {
+  const ring = ringFromLonLat(b.ring);
+  if (!ring || b.h < 2) continue;
+  const faces: Array<[number, number[]]> = b.faces.filter((f) => f.k !== 0).map((f) =>
+    [f.k, f.pts.flatMap(([lon, lat, z]) => toEnu(lon, lat, z + GEOID).map((v) => Math.round(v * 100) / 100))]);
+  const n = parseInt(b.id.slice(-8), 16) || meshes.length;
+  // no glass towers in a historic centre: anything tall (towers, spires, churches) is stone
+  meshes.push({ faces, s: b.h >= 40 ? 2 : style(b.h, "regular", n), ring });
+  tlvCover.push(ring);
+}
+console.log(`  lod2 meshes: ${meshes.length}`);
+// … then LoD1 2024 prisms (footprint, LiDAR median height, ground elevation) for buildings LoD2 lacks.
+const lod2Cover = new Map<string, P2[][]>();
+for (const r of tlvCover) { const k = `${Math.floor(r[0][0] / 50)}_${Math.floor(r[0][1] / 50)}`; (lod2Cover.get(k) ?? lod2Cover.set(k, []).get(k)!).push(r); }
+const inLod2 = (pt: P2) => {
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++)
+    if (lod2Cover.get(`${Math.floor(pt[0] / 50) + dx}_${Math.floor(pt[1] / 50) + dy}`)?.some((r) => inside(pt, r))) return true;
+  return false;
+};
 const gugikFile = join(raw, "gugik_buildings.json");
 for (const b of existsSync(gugikFile) ? readJson<GugikBuilding[]>(gugikFile) : []) {
   const ring = ringFromLonLat(b.ring);
   if (!ring || b.h < 2) continue;
+  if (meshes.length && inLod2([ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length])) continue;
   const n = parseInt(b.id.slice(-8), 16) || buildings.length;
   buildings.push({ ring, h: b.h, s: style(b.h, "regular", n), g: b.z + GEOID });
   tlvCover.push(ring);
@@ -215,12 +239,12 @@ for (const f of can.features) {
 console.log(`  tree crowns: ${trees.length}`);
 
 // 4. Bin objects by the render tiles they can appear on (base … top, + margin).
-const bins = new Map<string, { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }>();
+const bins = new Map<string, { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]>; m: Array<[Array<[number, number[]]>, number]> }>();
 const add = (minx: number, miny: number, maxx: number, maxy: number, fn: (bin: any) => void) => {
   for (let ty = Math.floor((miny - 8) / T); ty <= Math.floor((maxy + 8) / T); ty++)
     for (let tx = Math.floor((minx - 8) / T); tx <= Math.floor((maxx + 8) / T); tx++) {
       const k = `${tx}_${ty}`;
-      if (!bins.has(k)) bins.set(k, { b: [], t: [] });
+      if (!bins.has(k)) bins.set(k, { b: [], t: [], m: [] });
       fn(bins.get(k)!);
     }
 };
@@ -230,6 +254,12 @@ for (const b of buildings) {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const ring = b.ring.map(([x, y]) => [Math.round(x * 100) / 100, Math.round(y * 100) / 100] as P2);
   add(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), (bin) => bin.b.push([ring, Math.round(b.h * 10) / 10, b.s, b.g && Math.round(b.g * 10) / 10]));
+}
+for (const m of meshes) {
+  // the mesh itself, plus its footprint pushed 15 m down (the renderer may lower it onto the terrain)
+  const pts = m.faces.flatMap(([, v]) => { const o: Array<[number, number]> = []; for (let i = 0; i < v.length; i += 3) o.push(enuToPixel([v[i], v[i + 1], v[i + 2]]), enuToPixel([v[i], v[i + 1], v[i + 2] - 15])); return o; });
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  add(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), (bin) => bin.m.push([m.faces, m.s]));
 }
 for (const t of trees) {
   const a = enuToPixel([t[0], t[1], GROUND_GUESS - 15]), c = enuToPixel([t[0], t[1], GROUND_GUESS + 25 + t[3] + t[2]]);
