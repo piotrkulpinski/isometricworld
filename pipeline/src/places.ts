@@ -46,12 +46,14 @@ export interface Spot { lat: number; lon: number; r: number }
  *   parakeets   flocks of rose-ringed parakeets over the streets (sky.ts Parrots)
  *   pigeons     flocks that sit on open squares and now and then fly to another (sky.ts Pigeons)
  *   carriages   horse-drawn carriages driving round a closed loop of [lat, lon] (carriages.ts)
+ *   trams       trams on the exported tram tracks, stopping at the platforms (trams.ts)
  */
 export type Fauna =
   | { kind: "cats" }
   | { kind: "parakeets" }
   | { kind: "pigeons"; plazas: Spot[] }
-  | { kind: "carriages"; loop: Array<[number, number]>; count: number };
+  | { kind: "carriages"; loop: Array<[number, number]>; count: number }
+  | { kind: "trams" };
 
 export interface City {
   title: string;
@@ -112,6 +114,7 @@ export const REGIONS: Record<string, Region> = {
       title: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego, CC BY 4.0",
     },
     fauna: [
+      { kind: "trams" },
       {
         kind: "pigeons",
         plazas: [

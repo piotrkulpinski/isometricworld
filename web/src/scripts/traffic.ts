@@ -57,6 +57,8 @@ export class Traffic {
   private rand = mulberry(7);
   /** vehicles drawn in the last frame (debug / tests) */
   drawn = 0;
+  /** other movers on the streets (tram bodies, ENU points): vehicles brake for one ahead of them */
+  obstacles: Array<[number, number]> | null = null;
 
   constructor(roads: Road[], private enu2px: number[][], private camFwd: [number, number], density = 1) {
     for (const r of roads) {
@@ -197,6 +199,15 @@ export class Traffic {
           const gap = lead.s - lead.len / 2 - (v.s + v.len / 2) - GAP;
           target = Math.min(target, Math.max(0, gap / HEADWAY), lead.v + Math.max(0, gap) * 0.5);
         }
+        if (this.obstacles?.length) { // a tram on our lane or crossing ahead
+          const [c, d] = this.pose(v);
+          let free = Infinity;
+          for (const [x, y] of this.obstacles) {
+            const ahead = (x - c[0]) * d[0] + (y - c[1]) * d[1] - v.len / 2, side = Math.abs((x - c[0]) * d[1] - (y - c[1]) * d[0]);
+            if (ahead > -1 && ahead < 40 && side < v.wid / 2 + 1.5) free = Math.min(free, ahead);
+          }
+          if (free < Infinity) target = Math.min(target, Math.max(0, free - GAP - 1.2) / HEADWAY);
+        }
         // approaching the junction: slow for the turn; at the stop line wait until it's granted
         const toStop = this.toStop(v);
         if (!v.through && v.next && toStop < 30) {
@@ -245,6 +256,25 @@ export class Traffic {
       Object.assign(v, { w, dir, lane: 0, s: start, v: 0, next: null, stuck: 0, through: false });
       return;
     }
+  }
+
+  /** Centre (ENU, in its lane) and travel direction of a vehicle. */
+  private pose(v: Vehicle): [Vec3, [number, number]] {
+    const way = this.ways[v.w], S = way.r.s;
+    const s = Math.max(0, Math.min(way.len, v.dir === 1 ? v.s : way.len - v.s));
+    let i = 1;
+    while (i < way.n - 1 && way.cum[i] < s) i++;
+    const k0 = (i - 1) * 4, k1 = i * 4, f = (s - way.cum[i - 1]) / Math.max(1e-3, way.cum[i] - way.cum[i - 1]);
+    let dx = S[k1] - S[k0], dy = S[k1 + 1] - S[k0 + 1];
+    const L = Math.hypot(dx, dy) || 1;
+    dx = (dx / L) * v.dir; dy = (dy / L) * v.dir;
+    const off = this.offset(way, v);
+    return [[S[k0] + (S[k1] - S[k0]) * f + dy * off, S[k0 + 1] + (S[k1 + 1] - S[k0 + 1]) * f - dx * off, S[k0 + 2] + (S[k1 + 2] - S[k0 + 2]) * f], [dx, dy]];
+  }
+
+  /** Centres of all vehicles (ENU), for other movers that keep clear of them. */
+  centres(): Array<[number, number]> {
+    return this.vehicles.map((v) => { const [c] = this.pose(v); return [c[0], c[1]]; });
   }
 
   /** Lateral offset (m, + = right of travel) of the lane centre, kept inside the drawn asphalt. */

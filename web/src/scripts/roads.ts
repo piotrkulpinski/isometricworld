@@ -52,3 +52,9 @@ export function groundLookup(roads: Road[], maxM = 40) {
     return best;
   };
 }
+
+/** trams.<hash>.json (pipeline/src/export.ts): tram tracks in the roads format, plus stops as
+ *  [track index, sample index] pairs. */
+export function decodeTrams(data: Encoded & { stops?: number[] }) {
+  return { tracks: decodeRoads(data), stops: data.stops ?? [] };
+}

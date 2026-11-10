@@ -13,6 +13,7 @@
  *   data/tiles-<layer>.<hash>.json     every tile of a layer per zoom with its content hash (URL ?v=)
  *   data/borders.<hash>.json           OSM city borders in art-pixel space, on real terrain
  *   data/roads.<hash>.json             drivable roads for traffic (columnar, delta-coded: encodeRoads)
+ *   data/trams.<hash>.json             tram tracks, same format, plus stops (where the region has trams)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
  * The legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
@@ -320,65 +321,140 @@ async function exportBorders(heights: Heights) {
   console.log(`  borders: ${feats.length} cities`);
 }
 
-/** Drivable roads as ENU polylines sampled every 4 m, each sample flagged visible/occluded. */
-async function exportRoads(areas: string[], heights: Heights) {
-  const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
-  const ways = [];
-  const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
+type Sampled = { y: number; c: number; o: number; l: number; w: number; a: number; b: number; s: number[] };
+
+/**
+ * OSM ways as ENU polylines sampled every ~6 m, each sample flagged visible/occluded, split at every
+ * node another of these ways shares (so junctions and switches are always way ends). `props` gives a
+ * way's class, direction, lanes and width.
+ */
+async function sampleWays(els: any[], heights: Heights, props: (t: Record<string, string>) => { c: number; o: number; l: number; w: number }) {
+  const ways: Sampled[] = [];
   let occluded = 0, total = 0;
-  for (const a of areas) {
-    const f = join(RAW, a, "roads.json");
-    if (!existsSync(f)) continue;
-    const els = readJson(f).elements.filter((el: any) => {
-      const t = el.tags ?? {};
-      if (seen.has(el.id)) return false;
-      seen.add(el.id);
-      return el.geometry?.length >= 2 && t.tunnel !== "yes" && !String(t.layer ?? "").startsWith("-") && roadWidth(t) > 0;
-    });
-    // split ways at every node another road shares, so junctions are always way ends
-    const use = new Map<number, number>();
-    for (const el of els) el.nodes.forEach((n: number, i: number) => use.set(n, (use.get(n) ?? 0) + (i === 0 || i === el.nodes.length - 1 ? 2 : 1)));
-    for (const el of els) {
-      const t = el.tags ?? {};
-      const cls = CLS[String(t.highway).replace("_link", "")] ?? 5;
-      const width = roadWidth(t);
-      let start = 0;
-      for (let end = 1; end < el.nodes.length; end++) {
-        if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
-        const pts = el.geometry.slice(start, end + 1).map((p: any) => ({ lat: p.lat, lon: p.lon, e: ecefToEnu(llhToEcef(p.lat, p.lon, 0)) }));
-        const samples: number[] = [];
-        for (let i = 0; i < pts.length - 1; i++) {
-          const a0 = pts[i], b0 = pts[i + 1];
-          const n = Math.max(1, Math.ceil(Math.hypot(b0.e[0] - a0.e[0], b0.e[1] - a0.e[1]) / 6));
-          for (let k = 0; k < n + (i === pts.length - 2 ? 1 : 0); k++) {
-            const f2 = k / n, lat = a0.lat + (b0.lat - a0.lat) * f2, lon = a0.lon + (b0.lon - a0.lon) * f2;
-            const g = await onGround(heights, lat, lon);
-            const surf = heights.at(g.x, g.y);
-            const vis = surf === null || surf <= g.h + 2.5 ? 1 : 0; // bridges are drawn at ground level
-            total++; occluded += 1 - vis;
-            const e = ecefToEnu(llhToEcef(lat, lon, g.h));
-            samples.push(Math.round(e[0] * 10) / 10, Math.round(e[1] * 10) / 10, Math.round(e[2] * 10) / 10, vis);
-          }
+  const use = new Map<number, number>();
+  for (const el of els) el.nodes.forEach((n: number, i: number) => use.set(n, (use.get(n) ?? 0) + (i === 0 || i === el.nodes.length - 1 ? 2 : 1)));
+  for (const el of els) {
+    const t = el.tags ?? {};
+    const pr = props(t);
+    let start = 0;
+    for (let end = 1; end < el.nodes.length; end++) {
+      if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
+      const pts = el.geometry.slice(start, end + 1).map((p: any) => ({ lat: p.lat, lon: p.lon, e: ecefToEnu(llhToEcef(p.lat, p.lon, 0)) }));
+      const samples: number[] = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a0 = pts[i], b0 = pts[i + 1];
+        const n = Math.max(1, Math.ceil(Math.hypot(b0.e[0] - a0.e[0], b0.e[1] - a0.e[1]) / 6));
+        for (let k = 0; k < n + (i === pts.length - 2 ? 1 : 0); k++) {
+          const f2 = k / n, lat = a0.lat + (b0.lat - a0.lat) * f2, lon = a0.lon + (b0.lon - a0.lon) * f2;
+          const g = await onGround(heights, lat, lon);
+          const surf = heights.at(g.x, g.y);
+          const vis = surf === null || surf <= g.h + 2.5 ? 1 : 0; // bridges are drawn at ground level
+          total++; occluded += 1 - vis;
+          const e = ecefToEnu(llhToEcef(lat, lon, g.h));
+          samples.push(Math.round(e[0] * 10) / 10, Math.round(e[1] * 10) / 10, Math.round(e[2] * 10) / 10, vis);
         }
-        ways.push({
-          y: Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0),
-          c: cls, o: t.oneway === "-1" ? -1 : isOneway(t) ? 1 : 0,
-          l: roadLanes(t), w: Math.round(width * 10) / 10, a: el.nodes[start], b: el.nodes[end], s: samples,
-        });
-        start = end;
       }
+      ways.push({ y: Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0), ...pr, a: el.nodes[start], b: el.nodes[end], s: samples });
+      start = end;
     }
   }
-  occluded += hideUnderBridges(ways);
-  // nothing drives or walks in the faded margin outside the painted map
+  return { ways, occluded, total };
+}
+
+/** OSM ways of every area's raw `file` passing `keep`, per area, each OSM way once (areas overlap: the pilot lies inside tlv-core). */
+function rawWays(areas: string[], file: string, keep: (el: any) => boolean) {
+  const seen = new Set<number>(), out: any[][] = [];
+  for (const a of areas) {
+    const f = join(RAW, a, file);
+    if (!existsSync(f)) continue;
+    out.push(readJson(f).elements.filter((el: any) => {
+      if (el.type !== "way" || seen.has(el.id) || !keep(el)) return false;
+      seen.add(el.id);
+      return true;
+    }));
+  }
+  return out;
+}
+
+/** sampleWays per area (ways are split at the nodes they share within their area), merged */
+async function sampleAreas(perArea: any[][], heights: Heights, props: Parameters<typeof sampleWays>[2]) {
+  const all = { ways: [] as Sampled[], occluded: 0, total: 0 };
+  for (const els of perArea) {
+    const r = await sampleWays(els, heights, props);
+    all.ways.push(...r.ways); all.occluded += r.occluded; all.total += r.total;
+  }
+  return all;
+}
+
+/** Hide samples in the faded margin outside the painted map: nothing drives or walks there. */
+function hideMargin(ways: Sampled[]) {
+  let hidden = 0;
   for (const w of ways) for (let k = 0; k < w.s.length; k += 4) {
     if (!w.s[k + 3]) continue;
     const [x, y] = enuToPixel([w.s[k], w.s[k + 1], w.s[k + 2]]);
-    if (edgeDistance(x, y) < (EDGE0 + EDGE1) / 2) { w.s[k + 3] = 0; occluded++; }
+    if (edgeDistance(x, y) < (EDGE0 + EDGE1) / 2) { w.s[k + 3] = 0; hidden++; }
   }
+  return hidden;
+}
+
+/**
+ * Drivable roads (roads.json) and tram tracks (railway=tram in ground.json, no tunnels, depots and
+ * sidings) as ENU polylines, each sample flagged visible/occluded. Vehicles on either disappear under
+ * a bridge of either.
+ */
+async function exportRoads(areas: string[], heights: Heights) {
+  const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
+  const underground = (t: any) => t.tunnel === "yes" || String(t.layer ?? "").startsWith("-");
+  const roadEls = rawWays(areas, "roads.json", (el) => {
+    const t = el.tags ?? {};
+    return el.geometry?.length >= 2 && !underground(t) && roadWidth(t) > 0;
+  });
+  const roads = await sampleAreas(roadEls, heights, (t) => ({
+    c: CLS[String(t.highway).replace("_link", "")] ?? 5, o: t.oneway === "-1" ? -1 : isOneway(t) ? 1 : 0, l: roadLanes(t), w: Math.round(roadWidth(t) * 10) / 10,
+  }));
+  const isTram = (t: any) => t.railway === "tram" && !underground(t) && t.tunnel !== "building_passage" && !["yard", "siding", "spur"].includes(t.service);
+  const isPlatform = (t: any) => t.railway === "platform" || (t.public_transport === "platform" && t.tram === "yes");
+  const groundEls = rawWays(areas, "ground.json", (el) => el.geometry?.length >= 2 && (isTram(el.tags ?? {}) || isPlatform(el.tags ?? {})));
+  const tramEls = groundEls.map((els) => els.filter((el) => isTram(el.tags ?? {})));
+  const platforms = groundEls.flat().filter((el) => isPlatform(el.tags ?? {}));
+  // one track per way: oneway=yes (most of Kraków's) runs forward, otherwise both ways
+  const trams = await sampleAreas(tramEls, heights, (t) => ({ c: 0, o: t.oneway === "-1" ? -1 : t.oneway === "yes" ? 1 : 0, l: 1, w: 2.6 }));
+  const ways = roads.ways;
+  let occluded = roads.occluded + hideUnderBridges([...ways, ...trams.ways]);
+  occluded += hideMargin(ways);
+  hideMargin(trams.ways);
   bridgeDecks(ways);
   writeData("roads", JSON.stringify(encodeRoads(ways)));
-  console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded`);
+  console.log(`  roads: ${ways.length} ways, ${roads.total} samples, ${((occluded / Math.max(1, roads.total)) * 100).toFixed(1)}% occluded`);
+  // ground.json reaches ~2 km past the area: keep only tracks with something on the map
+  const tracks = trams.ways.filter((w) => w.s.some((v, k) => k % 4 === 3 && v));
+  if (!tracks.length) return;
+  const stops = tramStops(platforms, tracks);
+  writeData("trams", JSON.stringify({ ...encodeRoads(tracks), stops }));
+  console.log(`  trams: ${tracks.length} track sections, ${tracks.reduce((a, w) => a + w.s.length / 4, 0)} samples, ${stops.length / 2} stops`);
+}
+
+/**
+ * Tram stops as [way index, sample index] pairs: every tram platform from ground.json
+ * (public_transport=platform with tram=yes, or railway=platform) snapped to the nearest track within
+ * 8 m, and to a second track as close (an island platform serves both directions).
+ */
+function tramStops(platforms: any[], tracks: Sampled[]) {
+  const stops: number[] = [];
+  for (const p of platforms) {
+    const g = p.geometry, lat = g.reduce((a: number, q: any) => a + q.lat, 0) / g.length, lon = g.reduce((a: number, q: any) => a + q.lon, 0) / g.length;
+    const [e, n] = ecefToEnu(llhToEcef(lat, lon, 0));
+    const near = tracks.map((w, i) => {
+      let best = Infinity, at = 0;
+      for (let k = 0; k < w.s.length; k += 4) {
+        const d = Math.hypot(w.s[k] - e, w.s[k + 1] - n);
+        if (d < best) { best = d; at = k / 4; }
+      }
+      return { i, d: best, at };
+    }).filter((x) => x.d < 8).sort((a, b) => a.d - b.d);
+    for (const x of near) if (x.d < near[0].d + 1.5) stops.push(x.i, x.at);
+  }
+  return stops;
 }
 
 /**
@@ -603,7 +679,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trams: dataFile("trams") },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

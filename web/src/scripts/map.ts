@@ -3,6 +3,7 @@ import OpenSeadragon from "openseadragon";
 import type { Traffic } from "./traffic.ts";
 import type { Cats } from "./cats.ts";
 import type { Carriages } from "./carriages.ts";
+import type { Trams } from "./trams.ts";
 import type { Planes, Parrots, Pigeons, Airport } from "./sky.ts";
 import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS, type Fauna } from "../../../pipeline/src/places.ts";
@@ -22,7 +23,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trams?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -124,7 +125,7 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
-let pigeons: Pigeons | null = null, carriages: Carriages | null = null;
+let pigeons: Pigeons | null = null, carriages: Carriages | null = null, trams: Trams | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -135,13 +136,20 @@ function loadAnimations() {
     import("./traffic.ts"), fauna("cats") ? import("./cats.ts") : null, import("./sky.ts"), import("./roads.ts"),
     carriageCfg ? import("./carriages.ts") : null,
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
-  ]).then(([{ Traffic }, catsModule, { Planes, Parrots, Pigeons }, { decodeRoads, groundLookup }, carriagesModule, data]) => {
+    fauna("trams") && files.trams
+      ? Promise.all([import("./trams.ts"), fetch(`${BASE}/data/${files.trams}`).then((r) => (r.ok ? r.json() : null))])
+      : null,
+  ]).then(([{ Traffic }, catsModule, { Planes, Parrots, Pigeons }, { decodeRoads, decodeTrams, groundLookup }, carriagesModule, data, tramData]) => {
     const roads = decodeRoads(data);
     // places.ts is the truth for the airport (world.json has it only after a re-export)
     const airport = region.airport ?? world.airport;
     if (airport) planes = new Planes(world.enu2px, airport);
     const fwd: [number, number] = [Math.sin(heading), Math.cos(heading)];
     if (roads.length) traffic = new Traffic(roads, world.enu2px, fwd);
+    if (tramData?.[1]) {
+      const { tracks, stops } = decodeTrams(tramData[1]);
+      if (tracks.length) trams = new tramData[0].Trams(tracks, stops, world.enu2px, fwd);
+    }
     if (roads.length && catsModule) cats = new catsModule.Cats(roads, world.enu2px);
     if (roads.length && carriagesModule && carriageCfg) carriages = new carriagesModule.Carriages(world.enu2px, carriageCfg.loop, carriageCfg.count, roads, fwd);
     if (roads.length && pigeonCfg) { // squares on the map, standing on the height of the nearest street
@@ -159,7 +167,7 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __pigeons: pigeons, __carriages: carriages });
+    Object.assign(window as object, { __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __pigeons: pigeons, __carriages: carriages, __trams: trams });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -218,6 +226,11 @@ function frame(t: number) {
   // zoomed out too far to see them (their draw() thresholds), cars and cats pause instead of
   // simulating thousands of invisible movers every frame
   const px = k / dpr;
+  if (trams && showTraffic && px >= 0.14) {
+    if (traffic) { trams.obstacles = traffic.centres(); traffic.obstacles = trams.points; } // trams and cars keep clear of each other
+    trams.step(dt);
+    trams.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
   if (traffic && showTraffic && px >= 0.14) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);
