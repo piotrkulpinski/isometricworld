@@ -22,11 +22,11 @@ export const AREAS: Record<string, Area> = {
     region: "israel-center",
     bbox: [32.0605, 34.7705, 32.0675, 34.7795],
   },
-  /** 1 km test patch in Kraków: Rynek Główny south to Wawel and the Vistula. */
+  /** ~1.7 km test patch in Kraków: the Barbican and Rynek Główny south to Wawel and the Vistula. */
   "krakow-test": {
     title: "Kraków · Old Town and Wawel",
     region: "poland-south",
-    bbox: [50.0535, 19.9300, 50.0625, 19.9440],
+    bbox: [50.0510, 19.9255, 50.0675, 19.9475],
   },
 };
 

@@ -43,7 +43,8 @@ const MARGIN = 16; // neighbour pixels used when building each zoomed-out tile
 /** Soft map edge: tiles fade out toward the areas' true outline instead of ending in tile steps.
  *  Fully transparent within EDGE0 of the outline (half a render tile's diagonal: the staircase
  *  never shows), fully opaque from EDGE1 in. */
-let EDGE0 = 760, EDGE1 = EDGE0 + 1800;
+const EDGE0 = 760;
+let EDGE1 = EDGE0 + 1800;
 let outlines: Array<Array<[number, number]>> = [];
 /** web/src/pages/index.astro #map background (#0e0f12): the edge fades into it */
 const BG = [14, 15, 18];
@@ -557,11 +558,11 @@ async function main() {
   if (from) state = readJson(from);
   console.log(`  ${activeRegion()}: ${from ? `changes since ${from === pendingFile() ? "the last (unpublished) export" : "the published state"}` : "no published state: building everything"}`);
   outlines = areas.map((a) => areaPolygon(AREAS[a].bbox));
-  // a small area (a test patch) would never reach full opacity: shrink the fade so EDGE1 is at most
-  // 60% of the way from the edge to the area's centre. City-sized areas keep the full fade.
+  // a small area (a test patch) would be mostly fade: keep the transparent band (it hides the tile
+  // staircase) and shorten the soft band after it to 15% of the way to the area's centre, 300 px at
+  // least. City-sized areas keep the full fade.
   const inradius = Math.max(...outlines.map((o) => insideDistance([o.reduce((t, p) => t + p[0], 0) / o.length, o.reduce((t, p) => t + p[1], 0) / o.length], o)));
-  const fade = Math.min(1, (0.6 * inradius) / EDGE1);
-  EDGE0 *= fade; EDGE1 *= fade;
+  EDGE1 = EDGE0 + Math.min(EDGE1 - EDGE0, Math.max(300, 0.15 * inradius));
   const photo = new Map<Key, string>(), art = new Map<Key, string>();
   const attributions = new Set<string>();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

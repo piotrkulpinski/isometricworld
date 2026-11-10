@@ -89,7 +89,7 @@ export const REGIONS: Record<string, Region> = {
 
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
-  krakow: { title: "Kraków", region: "poland-south", center: [50.0580, 19.9370], widthM: 1600 },
+  krakow: { title: "Kraków", region: "poland-south", center: [50.0585, 19.9365], widthM: 1600 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";
