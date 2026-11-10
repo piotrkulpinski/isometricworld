@@ -16,51 +16,82 @@ import { copyFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync,
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp, { type OverlayOptions } from "sharp";
-import { openArea } from "./areas.ts";
+import { groundH, openArea } from "./areas.ts";
 import { CAMERA, llhToPixel } from "./camera.ts";
 import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
-import { SEA_H, readHeights } from "./heights.ts";
+import { seaH, readHeights } from "./heights.ts";
 import { applyRegistration, register } from "./register.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
 const FEATHER = 64;
 const STYLE = join(PIPELINE, "style", "reference.png");
-const TREES = join(PIPELINE, "style", "trees.png"); // species sheet (painted once with Codex)
+/**
+ * What the prompt says about each region: country, tree legend and sheet (painted once with Codex),
+ * roofs and materials. The house style (reference.png) stays the same everywhere.
+ */
+interface RegionText { country: string; trees: string; treeSheet: string; legend: string; roofs: string; materials: string; paving: string }
+const REGION_TEXT: Record<string, RegionText> = {
+  "israel-center": {
+    country: "Israel",
+    trees: "trees.png",
+    treeSheet: "Tel Aviv street and park trees",
+    legend: "dark green = ficus, light green = tipuana, \
+lilac = jacaranda in bloom, red-orange = flame tree, grey-green = olive, dark teal = Aleppo pine, \
+blue-green tall = eucalyptus, small crown on a thin brown trunk = date palm (shorter) or Washingtonia fan palm (taller).",
+    roofs: "flat roofs with rooftop details",
+    materials: "Draw believable Tel Aviv \
+materials: white/cream plaster Bauhaus blocks with rounded balconies, stone public buildings, glass towers, \
+real window grids, balconies, shutters, rooftop solar heaters and AC units.",
+    paving: "pale grey/cream stone paving — not orange or terracotta —",
+  },
+  "poland-south": {
+    country: "Poland",
+    trees: "trees-central-european.png",
+    treeSheet: "Kraków street and park trees, in summer",
+    legend: "mid green = small-leaved lime, deep green = Norway maple, \
+light yellow-green small = field maple, very dark green = horse chestnut, pale olive = London plane, \
+light lime green = black locust, pale tall narrow = silver birch, dark olive = oak, dark teal tall narrow cone = Norway spruce.",
+    roofs: "steep pitched clay-tile and copper roofs on historic buildings, flat roofs on modern ones",
+    materials: "Draw believable Kraków \
+materials: 19th-century tenements (kamienice) with cream, ochre, pastel and grey plaster facades, cornices and tall \
+windows; Gothic brick churches and stone public buildings; steep red-brown clay-tile roofs and green copper roofs and \
+spires on historic buildings; plain post-war blocks with flat roofs. The render shows every building as a flat-topped \
+block at its measured height: on historic buildings draw a pitched roof inside the same footprint, its ridge at that height.",
+    paving: "grey granite setts and pale stone paving on squares and in the Old Town, grey asphalt elsewhere,",
+  },
+};
+
 const SEA = join(PIPELINE, "style", "sea.png");
 /** Minimum edge-map correlation between render and painted window (pilot range 0.58–0.90). */
 const MIN_MATCH = 0.45;
 /** Below this share of strong edges in the render (sea, sand, empty lots) the match check is skipped. */
 const MIN_TEXTURE = 0.05;
 
-const PROMPT = `Use your image generation tool. Four images are attached:
+const promptFor = (REGION: RegionText) => `Use your image generation tool. Four images are attached:
 1. input.png: an orthographic aerial render (camera tilted 45° down, no perspective) of a simple 3D model \
-of {title}, Israel, built from map data. ~256 m across. The layout is exact; the colours are flat \
+of {title}, ${REGION.country}, built from map data. ~256 m across. The layout is exact; the colours are flat \
 placeholders (grey = asphalt with lane markings, pale = pavement/plaza, green = grass/park, sand = beach, \
 blue = water, brown dashes = rail, terracotta = bike path) and the window patterns are schematic hints. \
-Tree crowns are colour-coded by species (see image 4): dark green = ficus, light green = tipuana, \
-lilac = jacaranda in bloom, red-orange = flame tree, grey-green = olive, dark teal = Aleppo pine, \
-blue-green tall = eucalyptus, small crown on a thin brown trunk = date palm (shorter) or Washingtonia fan palm (taller).
+Tree crowns are colour-coded by species (see image 4): ${REGION.legend}
 2. height.png: the height map from the SAME camera, pixel-aligned with image 1. Black = ground \
 (streets, squares, sea), grey→white = buildings and trees, brighter = taller. Use it to find exact \
 building footprints, edges and heights; open black areas are streets/plazas, not trees.
 3. style.png: the STYLE REFERENCE.
-4. trees.png: what each tree species looks like (Tel Aviv street and park trees), in the same style.
+4. trees.png: what each tree species looks like (${REGION.treeSheet}), in the same style.
 
 Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
 clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
-balconies, flat roofs with rooftop details, saturated but natural colours, realistic varied trees \
-drawn as the species of image 4 seen from above (palms as star-shaped frond crowns with a visible trunk), smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
+balconies, ${REGION.roofs}, saturated but natural colours, realistic varied trees \
+drawn as the species of image 4 seen from above${REGION.trees === "trees.png" ? " (palms as star-shaped frond crowns with a visible trunk)" : ""}, smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
 occlusion, no long shadows, no haze, no photographic noise.
 
 Geometry comes ONLY from images 1 and 2 — this is a tracing job:
 - Same orthographic camera, framing and scale: the output overlays image 1 pixel-for-pixel.
-- Every building keeps its exact footprint, position, height and roof outline. Draw believable Tel Aviv \
-materials: white/cream plaster Bauhaus blocks with rounded balconies, stone public buildings, glass towers, \
-real window grids, balconies, shutters, rooftop solar heaters and AC units. Tall towers stay tall. \
+- Every building keeps its exact footprint, position, height and roof outline. ${REGION.materials} Tall towers stay tall. \
 Do not add, remove, merge or move buildings or trees; do not invent trees over open streets.
 - Streets, squares, parks, beach and sea stay exactly where they are; give them real texture \
-(pale grey/cream stone paving — not orange or terracotta —, crosswalks at junctions, grass, sand, water ripples, parked cars along kerbs only, \
+(${REGION.paving} crosswalks at junctions, grass, sand, water ripples, parked cars along kerbs only, \
 no cars in the driving lanes).
 - Layering is exactly as in image 1: where a road bridge crosses rail tracks, a river or another road, the \
 bridge deck is continuous and on top, and whatever passes underneath is hidden beneath it — never draw \
@@ -86,13 +117,19 @@ const { values: args, positionals } = parseArgs({
     older: { type: "string" },
     assemble: { type: "boolean", default: false }, // only rebuild every art tile from the windows
     j: { type: "string", default: "3" },
-    center: { type: "string", default: "32.0715,34.7745" }, // lat,lon painted first (Rothschild / Dizengoff / beach)
+    center: { type: "string" }, // lat,lon painted first (default: Tel Aviv's Rothschild / Dizengoff / beach, else the area centre)
   },
 });
 const areaName = positionals[0] ?? "tlv-core";
 const base = join(DERIVED, areaName);
 const manifest = readJson(join(base, "manifest.json"));
-const title = openArea(areaName).title;
+const { title, region } = openArea(areaName);
+const REGION = REGION_TEXT[region];
+if (!REGION) throw new Error(`no paint prompt for region ${region}: add it to REGION_TEXT`);
+const PROMPT = promptFor(REGION);
+const TREES = join(PIPELINE, "style", REGION.trees);
+/** Codex model for painting (needs the built-in image generation tool); default: the Codex CLI's own. */
+const MODEL = process.env.CODEX_PAINT_MODEL ? ["-m", process.env.CODEX_PAINT_MODEL] : [];
 const OLDER = args.older ? new Date(args.older).getTime() : 0;
 const mtime = (f: string) => (existsSync(f) ? statSync(f).mtimeMs : 0);
 /** painted in the current style (with --older, windows painted before the cut-off don't count) */
@@ -137,10 +174,10 @@ async function windowGround(x: number, y: number) {
   for (let ty = Math.floor(y / T); ty <= Math.floor((y + WIN - 1) / T); ty++)
     for (let tx = Math.floor(x / T); tx <= Math.floor((x + WIN - 1) / T); tx++) {
       const f = join(base, "height", `${tx}_${ty}.png`);
-      if (existsSync(f)) for (const v of await readHeights(f)) if (!Number.isNaN(v) && v > SEA_H - 0.5) all.push(v);
+      if (existsSync(f)) for (const v of await readHeights(f)) if (!Number.isNaN(v) && v > seaH() - 0.5) all.push(v);
     }
   all.sort((a, b) => a - b);
-  return all[Math.floor(all.length * 0.05)] ?? SEA_H;
+  return all[Math.floor(all.length * 0.05)] ?? seaH();
 }
 
 function windows(): Array<[number, number]> {
@@ -203,7 +240,7 @@ function limitWait(log: string) {
 function codex(cwd: string, prompt: string): Promise<void> {
   return new Promise((resolve) => {
     const log = openSync(join(cwd, "codex.log"), "w");
-    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
+    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", ...MODEL, "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
       { stdio: ["pipe", log, log] });
     const timer = setTimeout(() => p.kill("SIGTERM"), 900_000);
     p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });
@@ -220,7 +257,7 @@ async function seaFraction(i: number, j: number) {
       if (!existsSync(f)) continue;
       const h = (await readHeights(f))[Math.floor((y - ty * T) / 4) * 256 + Math.floor((x - tx * T) / 4)];
       n++;
-      if (h <= SEA_H + 0.3) wet++;
+      if (h <= seaH() + 0.3) wet++;
     }
   return n ? wet / n : 0;
 }
@@ -337,7 +374,7 @@ async function deepWater(i: number, j: number) {
   let any = false;
   for (let cy = 0; cy < n; cy++) for (let cx = 0; cx < n; cx++) {
     const h = await heightAt(x0 + cx * CELL + CELL / 2, y0 + cy * CELL + CELL / 2);
-    const land = !Number.isNaN(h) && h > SEA_H + 0.3;
+    const land = !Number.isNaN(h) && h > seaH() + 0.3;
     d[cy * n + cx] = land ? 0 : 1e9;
     if (!land && !Number.isNaN(h)) any = true;
   }
@@ -462,8 +499,10 @@ async function main() {
   if (args.assemble) { await harmoniseSea(); return assemble(true); }
   // centre first: square rings around the city centre. Each ring runs in two passes over its
   // perimeter (even, then odd positions) so every window continues its painted inner/ring neighbours.
-  const [cx, cy] = args.center.split(",").map(Number);
-  const [px, py] = llhToPixel(cx, cy, 25);
+  const [s0, w0, n0, e0] = openArea(areaName).bbox;
+  const center = args.center ?? (areaName === "tlv-core" || areaName === "rothschild" ? "32.0715,34.7745" : `${(s0 + n0) / 2},${(w0 + e0) / 2}`);
+  const [cx, cy] = center.split(",").map(Number);
+  const [px, py] = llhToPixel(cx, cy, groundH());
   const ci = Math.floor(px / STRIDE), cj = Math.floor(py / STRIDE);
   const have = new Set(wins.map(([i, j]) => `${i}_${j}`));
   const maxR = Math.max(...wins.map(([i, j]) => Math.max(Math.abs(i - ci), Math.abs(j - cj))));

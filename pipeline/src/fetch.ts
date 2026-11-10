@@ -6,6 +6,7 @@
  * data/raw/<area>/tlv_buildings.geojson  Tel Aviv-Yafo GIS layer 513: footprints, 2019 surveyed
  *                                        height above ground, base/roof elevation, floors
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
+ * data/raw/<area>/gugik_buildings.json   Poland: GUGiK LoD1 2024 footprints, LiDAR heights, ground Z
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -15,7 +16,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
+import { fetchGugik } from "./gugik.ts";
 import { RAW } from "./paths.ts";
+import { REGIONS } from "./places.ts";
 
 const TLV = "https://gisn.tel-aviv.gov.il/arcgis/rest/services/IView2/MapServer/{layer}/query";
 const UA = { "User-Agent": "isometric-world/0.3 (open-data isometric map)" };
@@ -77,11 +80,16 @@ const area = openArea(name);
 const dir = join(RAW, name);
 mkdirSync(dir, { recursive: true });
 
-if (!existsSync(join(dir, "tlv_buildings.geojson")))
-  writeFileSync(join(dir, "tlv_buildings.geojson"), JSON.stringify(await arcgis(513, area.bbox,
-    "id_binyan,t_sug_mivne,ms_komot,gova_simplex_2019,min_height,max_height,year", "id_binyan")));
-if (!existsSync(join(dir, "tlv_canopy.geojson")))
-  writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
+const source = REGIONS[area.region].buildings;
+if (source?.kind === "tel-aviv") {
+  if (!existsSync(join(dir, "tlv_buildings.geojson")))
+    writeFileSync(join(dir, "tlv_buildings.geojson"), JSON.stringify(await arcgis(513, area.bbox,
+      "id_binyan,t_sug_mivne,ms_komot,gova_simplex_2019,min_height,max_height,year", "id_binyan")));
+  if (!existsSync(join(dir, "tlv_canopy.geojson")))
+    writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
+}
+if (source?.kind === "gugik-lod1" && !existsSync(join(dir, "gugik_buildings.json")))
+  fetchGugik(source.teryt, area.bbox, join(dir, "gugik_buildings.json"));
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;

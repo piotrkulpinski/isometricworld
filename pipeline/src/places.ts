@@ -22,6 +22,14 @@ export interface Region {
   airport?: { lat: number; lon: number; runwayHeadingDeg: number };
   /** Credit lines (video mode and footer). */
   credits: string[];
+  /** Geoid undulation at the origin (EGM2008, m): orthometric height + this = ellipsoid height. Also sea level. */
+  geoid: number;
+  /** Typical ground ellipsoid height (m): area outlines, and the band the scene bins objects in. */
+  groundH: number;
+  /** Building source beside OSM: Tel Aviv-Yafo municipal GIS, or GUGiK LoD1 3D models for a Polish powiat (TERYT). */
+  buildings?: { kind: "tel-aviv" } | { kind: "gugik-lod1"; teryt: string[] };
+  /** Tree palette the renderer colour-codes crowns with (see page/renderer.ts and style/trees*.png). */
+  flora: "mediterranean" | "central-european";
 }
 
 export interface City {
@@ -57,11 +65,31 @@ export const REGIONS: Record<string, Region> = {
       "Map data © OpenStreetMap contributors · Tel Aviv-Yafo Municipality",
       "Terrain: Copernicus DEM © DLR, Airbus DS · Painted with AI",
     ],
+    geoid: 19.1,
+    groundH: 25,
+    buildings: { kind: "tel-aviv" },
+    flora: "mediterranean",
+  },
+  "poland-south": {
+    title: "Poland · South",
+    origin: { lat: 50.0617, lon: 19.9373, h: 0 }, // Rynek Główny, Kraków
+    headingDeg: 340, // 20° west of north: diagonal to the Old Town grid (~25°), Wawel in front
+    country: "Poland",
+    municipalities: ["Kraków"],
+    credits: [
+      "Map data © OpenStreetMap contributors · Buildings: GUGiK (geoportal.gov.pl), CC BY 4.0",
+      "Terrain: Copernicus DEM © DLR, Airbus DS · Painted with AI",
+    ],
+    geoid: 39.8,
+    groundH: 235, // Vistula ~198 m, Rynek ~219 m, Wawel ~228 m above sea level, + geoid
+    buildings: { kind: "gugik-lod1", teryt: ["1261"] }, // powiat m. Kraków
+    flora: "central-european",
   },
 };
 
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
+  krakow: { title: "Kraków", region: "poland-south", center: [50.0580, 19.9370], widthM: 1600 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";

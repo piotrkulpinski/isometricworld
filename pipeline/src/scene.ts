@@ -12,12 +12,12 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
+import type { GugikBuilding } from "./gugik.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
+import { REGIONS } from "./places.ts";
 
 type P2 = [number, number];
 const T = CAMERA.tile;
-/** Geoid undulation off Tel Aviv: orthometric (MSL) + this = ellipsoid height. */
-const GEOID = 19.1;
 const FLOOR = 3.2;
 
 const toEnu = (lon: number, lat: number, h = 0): [number, number, number] => ecefToEnu(llhToEcef(lat, lon, h));
@@ -87,7 +87,9 @@ function style(height: number, kind: string, id: number, year?: number | null) {
 }
 
 const name = process.argv[2] ?? "tlv-core";
-const bbox = openArea(name).bbox;
+const { bbox, region } = openArea(name);
+/** Geoid undulation of the region: orthometric (MSL) + this = ellipsoid height. */
+const GEOID = REGIONS[region].geoid;
 const raw = join(RAW, name);
 const out = join(DERIVED, name, "scene");
 rmSync(out, { recursive: true, force: true });
@@ -97,8 +99,9 @@ type Building = { ring: P2[]; h: number; s: number; g: number | null };
 const buildings: Building[] = [];
 const tlvCover: P2[][] = [];
 
-// 1. Tel Aviv-Yafo municipal buildings: surveyed heights.
-const tlv = readJson(join(raw, "tlv_buildings.geojson"));
+// 1. Official buildings with surveyed heights. Tel Aviv-Yafo municipal GIS:
+const tlvFile = join(raw, "tlv_buildings.geojson");
+const tlv = existsSync(tlvFile) ? readJson(tlvFile) : { features: [] };
 for (const f of tlv.features) {
   const p = f.properties, g = f.geometry;
   if (!g) continue;
@@ -113,7 +116,16 @@ for (const f of tlv.features) {
     tlvCover.push(ring);
   }
 }
-console.log(`  tlv buildings: ${buildings.length}`);
+// … or GUGiK LoD1 (Poland): BDOT10k footprints, LiDAR median height, ground elevation (EVRF2007).
+const gugikFile = join(raw, "gugik_buildings.json");
+for (const b of existsSync(gugikFile) ? readJson<GugikBuilding[]>(gugikFile) : []) {
+  const ring = ringFromLonLat(b.ring);
+  if (!ring || b.h < 2) continue;
+  const n = parseInt(b.id.slice(-8), 16) || buildings.length;
+  buildings.push({ ring, h: b.h, s: style(b.h, "regular", n), g: b.z + GEOID });
+  tlvCover.push(ring);
+}
+console.log(`  official buildings: ${buildings.length}`);
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
 const coverGrid = new Map<string, P2[][]>(); // 50 m grid of municipal footprints for overlap tests
@@ -177,7 +189,8 @@ console.log(`  osm buildings (outside municipal layer): ${osmCount}`);
 }
 
 // 3. Tree crowns from 2024 canopy polygons: one crown per ~6 m cell inside each polygon.
-const can = readJson(join(raw, "tlv_canopy.geojson"));
+const canFile = join(raw, "tlv_canopy.geojson");
+const can = existsSync(canFile) ? readJson(canFile) : { features: [] };
 for (const f of can.features) {
   const g = f.geometry;
   if (!g) continue;
@@ -211,7 +224,7 @@ const add = (minx: number, miny: number, maxx: number, maxy: number, fn: (bin: a
       fn(bins.get(k)!);
     }
 };
-const GROUND_GUESS = 45;
+const GROUND_GUESS = REGIONS[region].groundH + 20;
 for (const b of buildings) {
   const pts = b.ring.flatMap(([x, y]) => [enuToPixel([x, y, GROUND_GUESS - 15]), enuToPixel([x, y, GROUND_GUESS + 25 + b.h])]);
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);

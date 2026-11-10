@@ -4,7 +4,8 @@
  * Driven by src/render.ts via Playwright: window.renderTile(tx, ty) -> PNG data.
  */
 import * as THREE from "three";
-import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
+import { CAMERA, activeRegion, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
+import { REGIONS } from "../src/places.ts";
 import { drawGround, type Feature } from "./ground.ts";
 
 const params = new URLSearchParams(location.search);
@@ -59,11 +60,14 @@ groundTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ map: groundTexture }));
 scene.add(groundMesh);
 
+/** ENU "up" range the terrain can span: the region's typical ground -30 … +95 m (Tel Aviv: -5 … 120). */
+const TERRAIN_RANGE = [REGIONS[activeRegion()].groundH - 30, REGIONS[activeRegion()].groundH + 95];
+
 /** ENU rectangle of ground the tile camera can see (screen rect swept over the terrain's height range). */
 function footprint(tx: number, ty: number) {
   const { right: r, up: v, dir: d } = axes();
   const T = CAMERA.tile * CAMERA.mpp, xs: number[] = [], ys: number[] = [];
-  for (const sx of [tx * T, (tx + 1) * T]) for (const sy of [ty * T, (ty + 1) * T]) for (const u of [-5, 120]) {
+  for (const sx of [tx * T, (tx + 1) * T]) for (const sy of [ty * T, (ty + 1) * T]) for (const u of TERRAIN_RANGE) {
     // p = r*sx - v*sy + d*t with p.z = u
     const t = (u + v[2] * sy) / d[2];
     xs.push(r[0] * sx - v[0] * sy + d[0] * t);
@@ -197,11 +201,13 @@ const buildingMaterial = new THREE.ShaderMaterial({
 });
 
 /**
- * Tree species of Tel Aviv streets and parks, as placeholder colours and shapes the paint step turns
- * into real trees (style/trees.png). Weights are rough shares; palms only replace small crowns.
+ * Tree species of the region's streets and parks, as placeholder colours and shapes the paint step
+ * turns into real trees (style/trees*.png). Weights are rough shares; palms only replace small crowns.
  * [name, weight, crown colour, crown scale xy, crown scale z, palm?]
  */
-const SPECIES: Array<[string, number, number[], number, number, boolean]> = [
+type Species = [string, number, number[], number, number, boolean];
+/** Tel Aviv streets and parks. */
+const MEDITERRANEAN: Species[] = [
   ["ficus", 22, [0.16, 0.36, 0.14], 1, 0.85, false],
   ["tipuana", 13, [0.42, 0.62, 0.22], 1.05, 0.7, false],
   ["jacaranda", 9, [0.62, 0.5, 0.85], 1, 0.7, false],
@@ -212,6 +218,19 @@ const SPECIES: Array<[string, number, number[], number, number, boolean]> = [
   ["date palm", 14, [0.55, 0.62, 0.2], 0, 0, true],
   ["fan palm", 11, [0.32, 0.5, 0.2], 0, 0, true],
 ];
+/** Kraków streets and parks (ZZM street-tree counts: lime and maples lead, chestnuts in the Planty). */
+const CENTRAL_EUROPEAN: Species[] = [
+  ["small-leaved lime", 30, [0.36, 0.56, 0.2], 1, 0.9, false],
+  ["norway maple", 18, [0.2, 0.42, 0.16], 1.05, 0.85, false],
+  ["field maple", 10, [0.5, 0.6, 0.26], 0.85, 0.8, false],
+  ["horse chestnut", 10, [0.12, 0.3, 0.1], 1.1, 0.9, false],
+  ["london plane", 7, [0.55, 0.62, 0.38], 1.15, 0.8, false],
+  ["black locust", 8, [0.62, 0.7, 0.3], 0.95, 0.7, false],
+  ["birch", 6, [0.7, 0.74, 0.42], 0.75, 1.1, false],
+  ["oak", 8, [0.24, 0.34, 0.12], 1.15, 0.85, false],
+  ["spruce", 3, [0.1, 0.24, 0.2], 0.6, 1.6, false],
+];
+const SPECIES = REGIONS[activeRegion()].flora === "central-european" ? CENTRAL_EUROPEAN : MEDITERRANEAN;
 const SPECIES_TOTAL = SPECIES.reduce((t, s) => t + s[1], 0);
 const rand = (x: number, y: number) => Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
 /** Mostly one species per ~40 m patch (streets are planted in runs), every 4th tree a random one. */

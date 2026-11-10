@@ -1,4 +1,5 @@
-import { CAMERA, llhToPixel, useRegion } from "./camera.ts";
+import { CAMERA, activeRegion, llhToPixel, useRegion } from "./camera.ts";
+import { REGIONS } from "./places.ts";
 
 /** A rendered patch of a region (see places.ts); all pipeline steps work per area. */
 export interface Area {
@@ -21,6 +22,12 @@ export const AREAS: Record<string, Area> = {
     region: "israel-center",
     bbox: [32.0605, 34.7705, 32.0675, 34.7795],
   },
+  /** 1 km test patch in Kraków: Rynek Główny south to Wawel and the Vistula. */
+  "krakow-test": {
+    title: "Kraków · Old Town and Wawel",
+    region: "poland-south",
+    bbox: [50.0535, 19.9300, 50.0625, 19.9440],
+  },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */
@@ -31,15 +38,15 @@ export function openArea(name: string): Area {
   return area;
 }
 
-/** Ground ellipsoid height used for area outlines (geoid ≈ 18 m + low terrain). */
-export const GROUND_H = 25;
+/** Ground ellipsoid height used for area outlines (the active region's typical ground). */
+export const groundH = () => REGIONS[activeRegion()].groundH;
 
 type Pt = [number, number];
 
 /** Area outline in global art pixels (the bbox projected at ground level: a slanted quad). */
 export function areaPolygon(bbox: [number, number, number, number]): Pt[] {
   const [s, w, n, e] = bbox;
-  return [[s, w], [s, e], [n, e], [n, w]].map(([lat, lon]) => llhToPixel(lat, lon, GROUND_H));
+  return [[s, w], [s, e], [n, e], [n, w]].map(([lat, lon]) => llhToPixel(lat, lon, groundH()));
 }
 
 export function inside([x, y]: Pt, poly: Pt[]) {

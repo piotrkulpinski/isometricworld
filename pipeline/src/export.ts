@@ -26,7 +26,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
-import { AREAS, GROUND_H, areaPolygon, insideDistance, openArea } from "./areas.ts";
+import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
 import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
@@ -286,7 +286,7 @@ class Heights {
 
 /** lat/lon -> art pixel on the real terrain (iterate: project, read ground, re-project). */
 async function onGround(heights: Heights, lat: number, lon: number) {
-  let h = GROUND_H;
+  let h = groundH();
   let [x, y] = llhToPixel(lat, lon, h);
   for (let it = 0; it < 3; it++) {
     const g = await heights.ground(x, y);

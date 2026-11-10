@@ -19,6 +19,7 @@ import sharp from "sharp";
 import { areaTiles, openArea } from "./areas.ts";
 import { CAMERA, camera, llhToPixel } from "./camera.ts";
 import { CHROME, CHROME_ARGS, DERIVED, PIPELINE, writeAtomic } from "./paths.ts";
+import { REGIONS } from "./places.ts";
 
 const { values: args, positionals } = parseArgs({
   allowPositionals: true,
@@ -33,9 +34,14 @@ const { values: args, positionals } = parseArgs({
 const areaName = positionals[0] ?? "rothschild";
 const area = openArea(areaName);
 
+const BUILDING_CREDIT = {
+  "tel-aviv": "Tel Aviv-Yafo Municipality open data",
+  "gugik-lod1": "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, geoportal.gov.pl), CC BY 4.0",
+};
+const buildingSource = REGIONS[area.region].buildings?.kind;
 export const ATTRIBUTIONS = [
   "© OpenStreetMap contributors (ODbL)",
-  "Tel Aviv-Yafo Municipality open data",
+  ...(buildingSource ? [BUILDING_CREDIT[buildingSource]] : []),
   "Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA",
 ];
 

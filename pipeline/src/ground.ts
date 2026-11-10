@@ -16,12 +16,10 @@ import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { camera, ecefToEnu, llhToEcef } from "./camera.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
-import { SEA_H } from "./heights.ts";
+import { seaH } from "./heights.ts";
 import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
 
 type P2 = [number, number];
-/** Geoid undulation off Tel Aviv: orthometric (MSL) + this = ellipsoid height (= sea level). */
-const GEOID = SEA_H;
 const STEP = 10;
 const MARGIN = 0.02;
 const R_EARTH = 6371000;
@@ -34,6 +32,8 @@ export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
+/** Geoid undulation of the region: orthometric (MSL) + this = ellipsoid height (= sea level). */
+const GEOID = seaH();
 const [S, W, N, E] = area.bbox;
 const bb = [S - MARGIN, W - MARGIN, N + MARGIN, E + MARGIN];
 const out = join(DERIVED, name, "ground");
@@ -239,21 +239,25 @@ const x0 = Math.floor(Math.min(...corners.map((c) => c[0])) / STEP) * STEP, x1 =
 const y0 = Math.floor(Math.min(...corners.map((c) => c[1])) / STEP) * STEP, y1 = Math.max(...corners.map((c) => c[1]));
 const grid: Grid = { x0, y0, nx: Math.ceil((x1 - x0) / STEP) + 1, ny: Math.ceil((y1 - y0) / STEP) + 1 };
 
-/** Copernicus tiles: 3600² float32, pixel centres at whole arc-seconds from the tile's SW-NW corner. */
+/**
+ * Copernicus tiles: float32, 3600 rows at whole arc-seconds from the tile's NW corner. Columns are
+ * 3600 up to 50° latitude and fewer above (2400 at 50–60°: 1.5″ spacing), so read the width per tile.
+ */
 async function loadDem() {
-  const dir = join(RAW, "dem"), tiles = new Map<string, Float32Array>();
+  const dir = join(RAW, "dem"), tiles = new Map<string, { t: Float32Array; w: number }>();
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".tif"))) {
     const m = f.match(/N(\d+)_00_E(\d+)_00/)!;
     const { data, info } = await sharp(join(dir, f)).extractChannel(0).raw({ depth: "float" }).toBuffer({ resolveWithObject: true });
-    if (info.width !== 3600) throw new Error(`${f}: unexpected width ${info.width}`);
-    tiles.set(`${Number(m[1])}_${Number(m[2])}`, new Float32Array(data.buffer, data.byteOffset, data.length / 4));
+    if (info.height !== 3600) throw new Error(`${f}: unexpected height ${info.height}`);
+    tiles.set(`${Number(m[1])}_${Number(m[2])}`, { t: new Float32Array(data.buffer, data.byteOffset, data.length / 4), w: info.width });
   }
   return (lat: number, lon: number) => {
-    const t = tiles.get(`${Math.floor(lat)}_${Math.floor(lon)}`);
-    if (!t) return 0;
-    const fx = (lon - Math.floor(lon)) * 3600, fy = (Math.floor(lat) + 1 - lat) * 3600;
-    const ix = Math.min(3598, Math.floor(fx)), iy = Math.min(3598, Math.floor(fy)), ax = fx - ix, ay = fy - iy;
-    const v = (x: number, y: number) => t[y * 3600 + x];
+    const tile = tiles.get(`${Math.floor(lat)}_${Math.floor(lon)}`);
+    if (!tile) return 0;
+    const { t, w } = tile;
+    const fx = (lon - Math.floor(lon)) * w, fy = (Math.floor(lat) + 1 - lat) * 3600;
+    const ix = Math.min(w - 2, Math.floor(fx)), iy = Math.min(3598, Math.floor(fy)), ax = fx - ix, ay = fy - iy;
+    const v = (x: number, y: number) => t[y * w + x];
     return (v(ix, iy) * (1 - ax) + v(ix + 1, iy) * ax) * (1 - ay) + (v(ix, iy + 1) * (1 - ax) + v(ix + 1, iy + 1) * ax) * ay;
   };
 }

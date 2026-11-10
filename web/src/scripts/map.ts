@@ -302,6 +302,7 @@ viewer.addOnceHandler("open", () => {
 document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
   `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
+  `<a href="https://www.geoportal.gov.pl/" title="Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego, CC BY 4.0">GUGiK</a>`,
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
