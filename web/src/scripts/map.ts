@@ -2,9 +2,10 @@ import OpenSeadragon from "openseadragon";
 // traffic, cats and sky are loaded after the first view (loadAnimations): not in the first script
 import type { Traffic } from "./traffic.ts";
 import type { Cats } from "./cats.ts";
-import type { Planes, Parrots, Airport } from "./sky.ts";
-import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
-import { CITIES } from "../../../pipeline/src/places.ts";
+import type { Carriages } from "./carriages.ts";
+import type { Planes, Parrots, Pigeons, Airport } from "./sky.ts";
+import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
+import { CITIES, REGIONS, type Fauna } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
 
 interface World {
@@ -28,7 +29,9 @@ type Index = Record<number, Record<string, string>>; // zoom → "x_y" → conte
 interface Border { id: number; name: string; name_en?: string; rings: Array<Array<[number, number]>>; label?: [number, number] }
 
 // the page says which city it is; the city's region is one flat map under /regions/<region>/
-const city = CITIES[document.body.dataset.city!], REGION = document.body.dataset.region!;
+const city = CITIES[document.body.dataset.city!], REGION = document.body.dataset.region!, region = REGIONS[REGION];
+/** the region's animated local life (places.ts), e.g. cats and parakeets in Tel Aviv */
+const fauna = <K extends Fauna["kind"]>(kind: K) => region.fauna.find((f): f is Extract<Fauna, { kind: K }> => f.kind === kind);
 // map data lives on R2; the dev server serves /regions from the export cache, falling back to R2
 const BASE = `${import.meta.env.DEV ? "" : __TILES_ORIGIN__}/regions/${REGION}`;
 useRegion(REGION);
@@ -121,27 +124,42 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
+let pigeons: Pigeons | null = null, carriages: Carriages | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
   if (animationsRequested) return;
   animationsRequested = true;
+  const carriageCfg = fauna("carriages"), pigeonCfg = fauna("pigeons");
   Promise.all([
-    import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
+    import("./traffic.ts"), fauna("cats") ? import("./cats.ts") : null, import("./sky.ts"), import("./roads.ts"),
+    carriageCfg ? import("./carriages.ts") : null,
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data]) => {
+  ]).then(([{ Traffic }, catsModule, { Planes, Parrots, Pigeons }, { decodeRoads, groundLookup }, carriagesModule, data]) => {
     const roads = decodeRoads(data);
-    if (world.airport) planes = new Planes(world.enu2px, world.airport);
-    if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
-    if (roads.length) cats = new Cats(roads, world.enu2px);
-    if (roads.length) { // parakeets roam over the streets' extent
+    // places.ts is the truth for the airport (world.json has it only after a re-export)
+    const airport = region.airport ?? world.airport;
+    if (airport) planes = new Planes(world.enu2px, airport);
+    const fwd: [number, number] = [Math.sin(heading), Math.cos(heading)];
+    if (roads.length) traffic = new Traffic(roads, world.enu2px, fwd);
+    if (roads.length && catsModule) cats = new catsModule.Cats(roads, world.enu2px);
+    if (roads.length && carriagesModule && carriageCfg) carriages = new carriagesModule.Carriages(world.enu2px, carriageCfg.loop, carriageCfg.count, roads, fwd);
+    if (roads.length && pigeonCfg) { // squares on the map, standing on the height of the nearest street
+      const ground = groundLookup(roads, 150);
+      const plazas = pigeonCfg.plazas.flatMap((p) => {
+        const [e, n] = ecefToEnu(llhToEcef(p.lat, p.lon, 0)), g = ground(e, n);
+        return g ? [{ e, n, u: g.u, r: p.r }] : [];
+      });
+      if (plazas.length) pigeons = new Pigeons(world.enu2px, plazas);
+    }
+    if (roads.length && fauna("parakeets")) { // parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
         a[0] = Math.min(a[0], r.s[i]); a[1] = Math.min(a[1], r.s[i + 1]); a[2] = Math.max(a[2], r.s[i]); a[3] = Math.max(a[3], r.s[i + 1]);
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes });
+    Object.assign(window as object, { __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __pigeons: pigeons, __carriages: carriages });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -204,11 +222,16 @@ function frame(t: number) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
+  if (carriages && showTraffic && px >= 0.2) {
+    carriages.step(dt);
+    carriages.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
   if (cats && showTraffic && px >= 0.6) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (showTraffic) { // sky above everything: parakeets, then the airliner
+  if (showTraffic) { // sky above everything: birds, then the airliner
+    if (pigeons) { pigeons.step(dt); pigeons.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
@@ -275,7 +298,7 @@ viewer.addOnceHandler("open", () => {
   const ll = new URLSearchParams(location.search).get("at")?.split(",").map(Number);
   /** centre on lat/lon with `widthM` metres across the screen */
   const show = (lat: number, lon: number, widthM: number) => {
-    const [x, y] = llhToPixel(lat, lon, 25), vp = viewer.viewport;
+    const [x, y] = llhToPixel(lat, lon, region.groundH), vp = viewer.viewport; // on the ground (Tel Aviv 25 m, Kraków 235 m)
     vp.zoomTo(base().getContentSize().x / (widthM / CAMERA.mpp), undefined, true);
     vp.panTo(globalToViewport(x, y), true);
   };
@@ -301,8 +324,8 @@ viewer.addOnceHandler("open", () => {
 
 document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
-  `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
-  `<a href="https://www.geoportal.gov.pl/" title="Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego, CC BY 4.0">GUGiK</a>`,
+  // the region's own source (municipal GIS, national survey), from places.ts
+  ...(region.sourceCredit ? [`<a href="${region.sourceCredit.href}"${region.sourceCredit.title ? ` title="${region.sourceCredit.title}"` : ""}>${region.sourceCredit.label}</a>`] : []),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,

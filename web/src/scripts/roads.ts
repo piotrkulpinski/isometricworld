@@ -25,3 +25,30 @@ export function decodeRoads(data: Encoded | Road[]): Road[] {
   }
   return roads;
 }
+
+/**
+ * Nearest road sample to an ENU point (within `maxM` metres): its height `u` and whether it is
+ * visible from the camera, for things that stand on the ground next to the roads (pigeons,
+ * carriages). Null when no road is that close.
+ */
+export function groundLookup(roads: Road[], maxM = 40) {
+  const cell = maxM, grid = new Map<string, number[]>(); // flat [e, n, u, vis] per cell
+  for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
+    const key = `${Math.floor(r.s[i] / cell)},${Math.floor(r.s[i + 1] / cell)}`;
+    let g = grid.get(key);
+    if (!g) grid.set(key, (g = []));
+    g.push(r.s[i], r.s[i + 1], r.s[i + 2], r.s[i + 3]);
+  }
+  return (e: number, n: number): { u: number; vis: boolean; d: number } | null => {
+    const cx = Math.floor(e / cell), cy = Math.floor(n / cell);
+    let best: { u: number; vis: boolean; d: number } | null = null;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const g = grid.get(`${cx + dx},${cy + dy}`);
+      if (g) for (let k = 0; k < g.length; k += 4) {
+        const d = Math.hypot(g[k] - e, g[k + 1] - n);
+        if (d <= maxM && (!best || d < best.d)) best = { u: g[k + 2], vis: g[k + 3] > 0, d };
+      }
+    }
+    return best;
+  };
+}
