@@ -8,7 +8,7 @@
  */
 
 export interface Road {
-  c: number;        // class 0 motorway … 5 service
+  c: number;        // class 0 motorway … 5 service, 6 closed to cars (kept for ground heights)
   o: number;        // 1 oneway forward, -1 oneway backward, 0 both
   l: number;        // lanes per direction (total if one-way)
   w?: number;       // carriageway width (m), as drawn on the map
@@ -18,7 +18,9 @@ export interface Road {
 
 type Vec3 = [number, number, number];
 
-interface Way { r: Road; n: number; cum: Float32Array; len: number; w: number }
+/** lanes: per-sample lane centre (m right of travel) where tram tracks share the road, indexed
+ *  lane (forward) or l + lane (backward); absent on roads without tracks */
+interface Way { r: Road; n: number; cum: Float32Array; len: number; w: number; lanes?: Float32Array[] }
 interface Vehicle {
   id: number;
   w: number; dir: 1 | -1; s: number; lane: number;
@@ -63,7 +65,7 @@ export class Traffic {
   constructor(roads: Road[], private enu2px: number[][], private camFwd: [number, number], density = 1) {
     for (const r of roads) {
       const n = r.s.length / 4;
-      if (n < 2) continue;
+      if (n < 2 || r.c > 5) continue;
       const cum = new Float32Array(n);
       for (let i = 1; i < n; i++)
         cum[i] = cum[i - 1] + Math.hypot(r.s[i * 4] - r.s[i * 4 - 4], r.s[i * 4 + 1] - r.s[i * 4 - 3]);
@@ -268,8 +270,82 @@ export class Traffic {
     let dx = S[k1] - S[k0], dy = S[k1 + 1] - S[k0 + 1];
     const L = Math.hypot(dx, dy) || 1;
     dx = (dx / L) * v.dir; dy = (dy / L) * v.dir;
-    const off = this.offset(way, v);
+    const off = this.offset(way, v, i, f);
     return [[S[k0] + (S[k1] - S[k0]) * f + dy * off, S[k0 + 1] + (S[k1 + 1] - S[k0 + 1]) * f - dx * off, S[k0 + 2] + (S[k1 + 2] - S[k0 + 2]) * f], [dx, dy]];
+  }
+
+  /**
+   * Tram tracks inside the carriageways (most of Kraków's trams share the street with cars). A lane
+   * that half overlaps a track moves onto it, or clear of it where the road is wide enough, so a car
+   * either queues behind a tram or passes it side by side, never through its flank.
+   */
+  useTracks(tracks: Road[]) {
+    const CELL = 8, TRAM = 1.3, CAR = 0.9, CLEAR = TRAM + CAR + 0.3;
+    const grid = new Map<string, number[]>(); // [e, n, unit direction e, n] per track sample
+    for (const t of tracks) for (let i = 0; i < t.s.length; i += 4) {
+      const j = i + 4 < t.s.length ? i + 4 : i - 4;
+      const dx = t.s[j] - t.s[i], dy = t.s[j + 1] - t.s[i + 1], L = Math.hypot(dx, dy) || 1;
+      const key = `${Math.floor(t.s[i] / CELL)},${Math.floor(t.s[i + 1] / CELL)}`;
+      let g = grid.get(key);
+      if (!g) grid.set(key, (g = []));
+      g.push(t.s[i], t.s[i + 1], dx / L, dy / L);
+    }
+    const smooth = (a: Float32Array) => {
+      for (let pass = 0; pass < 2; pass++) {
+        const b = a.slice();
+        for (let i = 1; i < a.length - 1; i++) a[i] = (b[i - 1] + b[i] + b[i + 1]) / 3;
+      }
+      return a;
+    };
+    for (const way of this.ways) {
+      const r = way.r, S = r.s, half = way.w / 2;
+      // per sample: tracks running along the road, as offsets right of the forward direction
+      const along: number[][] = [];
+      let any = false;
+      for (let i = 0; i < way.n; i++) {
+        const j = i + 1 < way.n ? i + 1 : i - 1, sign = j > i ? 1 : -1;
+        const L = Math.hypot(S[j * 4] - S[i * 4], S[j * 4 + 1] - S[i * 4 + 1]) || 1;
+        const tx = (sign * (S[j * 4] - S[i * 4])) / L, ty = (sign * (S[j * 4 + 1] - S[i * 4 + 1])) / L;
+        const found: number[] = [];
+        const cx = Math.floor(S[i * 4] / CELL), cy = Math.floor(S[i * 4 + 1] / CELL);
+        for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) {
+          const g = grid.get(`${gx},${gy}`);
+          if (g) for (let k = 0; k < g.length; k += 4) {
+            const ex = g[k] - S[i * 4], ey = g[k + 1] - S[i * 4 + 1];
+            if (Math.abs(ex * tx + ey * ty) > 3.5 || Math.abs(g[k + 2] * tx + g[k + 3] * ty) < 0.9) continue;
+            const side = ex * ty - ey * tx;
+            if (Math.abs(side) < half + 1 && !found.some((o) => Math.abs(o - side) < 1)) found.push(side);
+          }
+        }
+        if (found.length) any = true;
+        along.push(found);
+      }
+      if (!any) continue;
+      const lanes = Math.max(1, r.l), lw = r.o === 0 ? half / lanes : way.w / lanes;
+      way.lanes = [];
+      for (const dir of [1, -1]) for (let lane = 0; lane < lanes; lane++) {
+        const base = Math.max(-half + CAR + 0.2, Math.min(half - CAR - 0.2, half - (lane + 0.5) * lw));
+        way.lanes.push(smooth(Float32Array.from(along, (found) => {
+          let o = base;
+          for (let pass = 0; pass < 2; pass++) for (const t0 of found) {
+            const t = t0 * dir, d = o - t;
+            if (Math.abs(d) >= CLEAR) continue;
+            if (Math.abs(d) < 1) { o = t; continue; }
+            const away = t + Math.sign(d) * CLEAR;
+            o = Math.abs(away) <= half - CAR - 0.2 ? away : t;
+          }
+          return o;
+        })));
+      }
+    }
+  }
+
+  /** Move vehicles that start inside another mover (a tram body, ENU points) to a free road start. */
+  clearOf(points: Array<[number, number]>) {
+    for (const v of this.vehicles) {
+      const [c] = this.pose(v);
+      if (points.some(([x, y]) => Math.hypot(x - c[0], y - c[1]) < v.len / 2 + 1.5)) this.respawn(v);
+    }
   }
 
   /** Centres of all vehicles (ENU), for other movers that keep clear of them. */
@@ -278,11 +354,12 @@ export class Traffic {
   }
 
   /** Lateral offset (m, + = right of travel) of the lane centre, kept inside the drawn asphalt. */
-  private offset(way: Way, v: Vehicle) {
+  private offset(way: Way, v: Vehicle, i: number, f: number) {
     const r = way.r, half = way.w / 2;
     const lanes = Math.max(1, r.l);
     const lw = r.o === 0 ? half / lanes : way.w / lanes;
-    const o = half - (v.lane + 0.5) * lw;
+    const shared = way.lanes?.[v.dir === 1 ? v.lane : lanes + v.lane];
+    const o = shared ? shared[i - 1] + (shared[i] - shared[i - 1]) * f : half - (v.lane + 0.5) * lw;
     return Math.max(-half + v.wid / 2 + 0.2, Math.min(half - v.wid / 2 - 0.2, o));
   }
 
@@ -310,7 +387,7 @@ export class Traffic {
       let dx = S[k1] - S[k0], dy = S[k1 + 1] - S[k0 + 1];
       const L = Math.hypot(dx, dy) || 1;
       dx = (dx / L) * v.dir; dy = (dy / L) * v.dir;
-      const off = this.offset(way, v);
+      const off = this.offset(way, v, i, f);
       const c: Vec3 = [S[k0] + (S[k1] - S[k0]) * f + dy * off, S[k0 + 1] + (S[k1 + 1] - S[k0 + 1]) * f - dx * off, S[k0 + 2] + (S[k1 + 2] - S[k0 + 2]) * f];
       const [sx, sy] = proj(c);
       if (sx < vx0 - 40 || sy < vy0 - 40 || sx > vx1 + 40 || sy > vy1 + 40) continue;

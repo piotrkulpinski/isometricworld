@@ -125,7 +125,7 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
-let pigeons: Pigeons | null = null, carriages: Carriages | null = null, trams: Trams | null = null;
+let pigeons: Pigeons | null = null, carriages: Carriages | null = null, trams: Trams | null = null, trafficClear = false;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -149,6 +149,7 @@ function loadAnimations() {
     if (tramData?.[1]) {
       const { tracks, stops } = decodeTrams(tramData[1]);
       if (tracks.length) trams = new tramData[0].Trams(tracks, stops, world.enu2px, fwd);
+      if (tracks.length) traffic?.useTracks(tracks);
     }
     if (roads.length && catsModule) cats = new catsModule.Cats(roads, world.enu2px);
     if (roads.length && carriagesModule && carriageCfg) carriages = new carriagesModule.Carriages(world.enu2px, carriageCfg.loop, carriageCfg.count, roads, fwd);
@@ -229,6 +230,7 @@ function frame(t: number) {
   if (trams && showTraffic && px >= 0.14) {
     if (traffic) { trams.obstacles = traffic.centres(); traffic.obstacles = trams.points; } // trams and cars keep clear of each other
     trams.step(dt);
+    if (traffic && !trafficClear && trams.points.length) { traffic.clearOf(trams.points); trafficClear = true; } // no car starts inside a tram
     trams.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (traffic && showTraffic && px >= 0.14) {

@@ -27,7 +27,7 @@ const r = await page.evaluate((steps) => {
     const k0 = (i - 1) * 4, k1 = i * 4, f = (s - way.cum[i - 1]) / Math.max(1e-3, way.cum[i] - way.cum[i - 1]);
     let dx = S[k1] - S[k0], dy = S[k1 + 1] - S[k0 + 1];
     const L = Math.hypot(dx, dy) || 1; dx = dx / L * v.dir; dy = dy / L * v.dir;
-    const off = T.offset(way, v);
+    const off = T.offset(way, v, i, f);
     return { x: S[k0] + (S[k1] - S[k0]) * f + dy * off, y: S[k0 + 1] + (S[k1 + 1] - S[k0 + 1]) * f - dx * off, dx, dy, v };
   });
   // oriented-box overlap test (separating axis) between nearby vehicles
