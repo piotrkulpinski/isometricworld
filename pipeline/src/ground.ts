@@ -19,7 +19,7 @@ import { DERIVED, RAW, readJson } from "./paths.ts";
 import { elevationSampler } from "./elevation.ts";
 import { seaH } from "./heights.ts";
 import { REGIONS } from "./places.ts";
-import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
+import { ROAD, isCarFree, isOneway, isStone, roadWidth } from "./roadspec.ts";
 
 type P2 = [number, number];
 const STEP = 10;
@@ -28,9 +28,9 @@ const R_EARTH = 6371000;
 
 /**
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
- * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
+ * w: line width (m), o: one-way, n: lanes, y: layer (bridges above), s: paved in stone (no markings)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][] }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; s?: 1; j?: number[][] }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -169,12 +169,14 @@ for (const el of osm.elements) {
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
       if (t.railway) { features.push({ k: "rail", l, ...(layer > 0 ? { y: layer } : {}) }); continue; }
       if (t.man_made) { features.push({ k: "pier", l, w: Number(t.width) || 4 }); continue; }
-      const road = ROAD[t.highway], path = PATH[t.highway];
+      // a car-free street in stone (Rynek Główny's perimeter) is paving like the square it borders
+      const plaza = !!ROAD[t.highway] && isCarFree(t) && isStone(t);
+      const road = plaza ? undefined : ROAD[t.highway], path = plaza ? roadWidth(t) : PATH[t.highway];
       if (!road && !path) continue;
       const oneway = isOneway(t);
       const lanes = Number(t.lanes) || 0;
       const w = road ? roadWidth(t) : Number(String(t.width).replace(",", ".")) || path;
-      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" ? "plaza" : "path";
+      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" || plaza ? "plaza" : "path";
       if (road && el.nodes) for (const id of el.nodes) {
         const nd = nodeUse.get(id) ?? { n: 0, w: 0, foot: false, y: 0, k: kind };
         nd.n++; nd.y = Math.max(nd.y, layer);
@@ -185,6 +187,7 @@ for (const el of osm.elements) {
       const f: Feature = { k: kind, l, w: r1(w) };
       if (oneway) f.o = 1;
       if (lanes) f.n = lanes;
+      if (road && isStone(t)) f.s = 1;
       if (layer > 0) f.y = layer;
       features.push(f);
       continue;

@@ -28,3 +28,17 @@ export function roadLanes(t: Record<string, string>): number {
   const w = roadWidth(t), n = Number(t.lanes) || Math.max(1, Math.round(w / 3.3));
   return isOneway(t) ? Math.max(1, n) : Math.max(1, Math.floor(n / 2));
 }
+
+/** Paved in stone (setts, cobbles, slabs): drawn without asphalt or lane markings. */
+export const isStone = (t: Record<string, string>) =>
+  ["sett", "cobblestone", "unhewn_cobblestone", "paving_stones", "stone", "granite"].includes(t.surface);
+
+/**
+ * Closed to ordinary cars: an explicit motor access ban, or a living street paved in stone (the
+ * old-town squares and lanes, such as the street round Kraków's Rynek Główny). Simulated cars skip
+ * these ways, and the ground draws them as paving.
+ */
+export function isCarFree(t: Record<string, string>) {
+  const access = t.motor_vehicle ?? t.motorcar ?? t.vehicle ?? t.access;
+  return ["no", "private", "permissive", "agricultural", "forestry"].includes(access) || (t.highway === "living_street" && isStone(t));
+}

@@ -22,7 +22,7 @@
  *
  * Tile (x, y) at zoom z covers global art pixels [x·512·2^(8-z), …); z = 8 is 1:1.
  */
-import { isOneway, roadLanes, roadWidth } from "./roadspec.ts";
+import { isCarFree, isOneway, roadLanes, roadWidth } from "./roadspec.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -410,7 +410,7 @@ async function exportRoads(areas: string[], heights: Heights) {
     return el.geometry?.length >= 2 && !underground(t) && roadWidth(t) > 0;
   });
   const roads = await sampleAreas(roadEls, heights, (t) => ({
-    c: CLS[String(t.highway).replace("_link", "")] ?? 5, o: t.oneway === "-1" ? -1 : isOneway(t) ? 1 : 0, l: roadLanes(t), w: Math.round(roadWidth(t) * 10) / 10,
+    c: isCarFree(t) ? 6 : CLS[String(t.highway).replace("_link", "")] ?? 5, o: t.oneway === "-1" ? -1 : isOneway(t) ? 1 : 0, l: roadLanes(t), w: Math.round(roadWidth(t) * 10) / 10,
   }));
   const isTram = (t: any) => t.railway === "tram" && !underground(t) && t.tunnel !== "building_passage" && !["yard", "siding", "spur"].includes(t.service);
   const isPlatform = (t: any) => t.railway === "platform" || (t.public_transport === "platform" && t.tram === "yes");

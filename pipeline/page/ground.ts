@@ -6,7 +6,7 @@
  */
 
 type P2 = [number, number];
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][] }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; s?: 1; j?: number[][] }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: number[][] }
 
 const FILL: Record<string, string> = {
@@ -22,7 +22,7 @@ const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
 const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85", lane: "#8b8d91", dirtroad: "#c3ab82" };
 const PATHS: Record<string, string> = { path: "#ebe5d6", cycle: "#c98e6c", plaza: "#e6e0d4" };
-const SIDEWALK = "#e4ded2", KERB = "#c9c4b9";
+const SIDEWALK = "#e4ded2", KERB = "#c9c4b9", SETT = "#a9a196";
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
 
 export function drawGround(
@@ -124,7 +124,7 @@ export function drawGround(
     disks(streetJs, 3, KERB);
     for (const f of streets) stroke(f.l!, f.w! + 5.4, SIDEWALK);
     disks(streetJs, 2.7, SIDEWALK);
-    for (const f of rs) stroke(f.l!, f.w!, ASPHALT[f.k]);
+    for (const f of rs) stroke(f.l!, f.w!, f.s && f.k !== "highway" ? SETT : ASPHALT[f.k]);
     disks(js, 0);
     // 5. markings, kept out of junctions (lines of crossing roads would scribble over each other)
     ctx.save();
@@ -133,7 +133,7 @@ export function drawGround(
     for (const [x, y, r] of junctions) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
     ctx.clip("evenodd");
     for (const f of rs) {
-      if (f.k !== "street" && f.k !== "highway") continue;
+      if ((f.k !== "street" && f.k !== "highway") || f.s) continue;
       const w = f.w!;
       if (f.k === "highway") { for (const s of [-1, 1]) stroke(offset(f.l!, s * (w / 2 - 0.5)), 0.15, "rgba(255,255,255,0.9)"); }
       const lanes = f.n ?? Math.max(1, Math.round(w / 3.3));
