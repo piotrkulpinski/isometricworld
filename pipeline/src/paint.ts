@@ -93,6 +93,11 @@ no aircraft anywhere (the map animates traffic and planes); parked cars only in 
 interface Local {
   ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string;
   /**
+   * Optional second style reference: the house style of image 3 applied to this region's architecture. Attached as
+   * the last image; regions without it get exactly the prompt and inputs they had before.
+   */
+  styleLocal?: string;
+  /**
    * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
    * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
    * checking them on their own paintings.
@@ -154,23 +159,29 @@ and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
     inventionChecks: true,
   },
-  // Wieliczka is drawn procedurally (look: "styled"): nothing of it is painted. This prompt is only for an optional
-  // painted A/B test of a few windows, like Stuttgart's.
+  // Kraków and Wieliczka (one region): painted like Tel Aviv and Zagreb. The house style is image 3, the Polish building
+  // character comes from styleLocal; named buildings go to FACADES or landmarks, never here.
   wieliczka: {
-    ground: "Streets, squares, parks, fields, rail and streams",
+    ground: "Streets, squares, parks, the river and its boulevards, fields, rail, tram tracks and streams",
     country: "Poland",
     render: `The layout and every roof shape are exact (real \
 pitched, hipped and flat roofs from Poland's national 3D building models) and the roof colours come from the aerial \
 photo; the walls' colours and window patterns are stylised hints (grey = asphalt with lane markings, pale = pavement/plaza, \
-green = grass/park, beige-yellow = fields, blue = water, brown lines = rail). Tree crowns are rounded deciduous crowns \
-(oak, lime, maple, birch) and dark narrow cones (spruce, pine), as in image 4.`,
-    treesOf: "Central European",
-    treeHint: " (broad rounded deciduous crowns in late-spring green, spruces and pines as narrow dark cones)",
-    materials: `Draw believable Wieliczka \
-(a small historic salt-mining town near Kraków) materials: plastered houses in white, cream, yellow and pastel tones, \
-red and brown clay-tile or sheet-metal pitched roofs, grey sheet and tar roofs, the salt mine's historic shaft houses and \
-the medieval castle in plaster and stone, churches with copper or shingle roofs, 1970s–80s blocks of flats, real window \
-grids, chimneys, dormers, solar panels where the render shows them.`,
+green = grass/park, beige-yellow = fields, blue = water, brown lines = rail and tram tracks). Tree crowns are rounded \
+deciduous crowns and dark narrow cones (spruce, pine), as in image 4.`,
+    treesOf: "Kraków",
+    treeHint: " (broad rounded deciduous crowns in early-summer green, spruces and pines as narrow dark cones)",
+    materials: `Draw believable Kraków \
+and Lesser Poland materials: historic tenement houses (kamienice) in cream, ochre, salmon, pale yellow and grey plaster with \
+cornices, tall windows and red clay-tile roofs with dormers around courtyards; older districts mixing exposed red brick and \
+plaster; Gothic churches in dark red brick with steep red tile or green copper roofs; 19th-century Austrian-era public \
+buildings and villas in plaster and stone; interwar modernist blocks with plain pale walls and flat roofs; 1960s–80s \
+prefabricated concrete blocks of flats in grey and pastel with long window bands and flat roofs; 1950s socialist-realist \
+blocks in warm grey and beige with heavy cornices and arcades; small towns of plastered houses with red, brown or grey \
+pitched roofs. Keep every building's colour and roof from image 1, and draw a church, tower or market only where image 1 \
+shows one. Woods, parks, fields and water stay exactly that: never add buildings, streets or squares where image 1 shows \
+trees, grass or water. Tall towers stay tall. Draw no trains, trams or buses anywhere (they are animated on top of the \
+map): leave rail and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
   },
 };
@@ -192,6 +203,15 @@ photo of the kind of objects that stand at this place (see the notes below). Use
 (shapes, colours, details), redrawn in the style of image 3. It says nothing about where anything stands, and never copy its \
 photographic look.
 `).join("");
+
+/** Region's second style reference (Local.styleLocal): the local building character, in the house style. */
+const STYLE_LOCAL_IMAGE = (n: number) => `${n}. style-local.png: a second STYLE REFERENCE showing the local architecture of \
+{country}, drawn in the style of image 3.
+`;
+const STYLE_LOCAL_RULE = (n: number) => `- Take the rendering style (line, detail, colour, light) from image 3 and the local building \
+character (roof shapes, materials, facade details, colours) from image ${n}. Like image 3, image ${n} is only a reference: \
+never copy its buildings, layout or architecture into the painting.
+`;
 
 /** --aerial-input: roofs, ground and trees of image 1 are the draped orthophoto, walls the render. */
 const HYBRID_RENDER = `Walls and facades come from the 3D model (exact \
@@ -482,7 +502,7 @@ async function falPaint(cwd: string, prompt: string, id: string): Promise<void> 
     try {
       r = await fetch(`https://fal.run/${FAL_ENDPOINT}`, {
         method: "POST", headers: { Authorization: `Key ${process.env.FAL_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text, image_urls: ["input.png", "height.png", "style.png", "trees.png"].map(uri),
+        body: JSON.stringify({ prompt: text, image_urls: ["input.png", "height.png", "style.png", "trees.png", ...(local.styleLocal ? ["style-local.png"] : [])].map(uri),
           num_images: 1, output_format: "png",
           ...(GOOGLE ? { aspect_ratio: "1:1", resolution: "1K", ...(process.env.PAINT_THINKING ? { thinking_level: process.env.PAINT_THINKING } : {}) } : { image_size: { width: WIN, height: WIN }, quality: FAL_QUALITY }) }),
         signal: AbortSignal.timeout(600_000),
@@ -524,7 +544,8 @@ async function falPaint(cwd: string, prompt: string, id: string): Promise<void> 
 }
 
 function codexWindow(cwd: string, prompt: string): Promise<void> {
-  const images = ["input.png", "height.png", "style.png", "trees.png", ...(args.aerial && !HYBRID ? ["aerial.png"] : []), ...REFS.map((_, k) => `ref${k + 1}.png`)];
+  const images = ["input.png", "height.png", "style.png", "trees.png", ...(args.aerial && !HYBRID ? ["aerial.png"] : []), ...REFS.map((_, k) => `ref${k + 1}.png`),
+    ...(local.styleLocal ? ["style-local.png"] : [])];
   return codex(cwd, images, prompt, { model: args.model, effort: args.effort });
 }
 
@@ -649,20 +670,24 @@ async function paintWindow(i: number, j: number) {
   const edges = await composeInput(i, j, join(work, "input.png"), join(work, "height.png"));
   copyFileSync(SIMPLE ? STYLE_SIMPLE : STYLE, join(work, "style.png"));
   copyFileSync(local.trees, join(work, "trees.png"));
+  if (local.styleLocal) copyFileSync(local.styleLocal, join(work, "style-local.png"));
   for (const [k, f] of REFS.entries()) await sharp(f).resize(1024, 1024, { fit: "inside" }).png().toFile(join(work, `ref${k + 1}.png`));
   if (args.aerial && !HYBRID) {
     const dir = join(base, `aerial-${args.aerial}`);
     const load = async (tx: number, ty: number) => (existsSync(join(dir, `${tx}_${ty}.png`)) ? sharp(join(dir, `${tx}_${ty}.png`)).png().toBuffer() : null);
     await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, load)).removeAlpha().png().toFile(join(work, "aerial.png"));
   }
+  const extra = (args.aerial && !HYBRID ? 1 : 0) + REFS.length, localN = 5 + extra; // style-local.png comes last
   let prompt = PROMPT.replace("{style}", SIMPLE ? SIMPLE_STYLE : PAINTED_STYLE).replace("{groundLook}", SIMPLE ? SIMPLE_GROUND : PAINTED_GROUND)
     .replace("{title}", title).replace("{country}", local.country).replace("{render}", HYBRID ? HYBRID_RENDER : local.render)
     .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "")
-    .replace("{count}", ["Four", "Five", "Six", "Seven", "Eight"][(args.aerial && !HYBRID ? 1 : 0) + REFS.length])
-    .replace("{aerialImage}", (args.aerial && !HYBRID ? AERIAL_IMAGE : "") + REF_IMAGES(args.aerial && !HYBRID ? 6 : 5, REFS.length))
+    .replace("{count}", ["Four", "Five", "Six", "Seven", "Eight", "Nine"][extra + (local.styleLocal ? 1 : 0)])
+    .replace("{aerialImage}", (args.aerial && !HYBRID ? AERIAL_IMAGE : "") + REF_IMAGES(args.aerial && !HYBRID ? 6 : 5, REFS.length)
+      + (local.styleLocal ? STYLE_LOCAL_IMAGE(localN).replace("{country}", local.country) : ""))
     .replace("{facades}", (await facadeNotes(i, j)) + (args.hint ? `- ${args.hint}\n` : ""))
-    .replace("{aerialRule}", (HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "") + (GUIDE ? GUIDE_RULE : ""));
+    .replace("{aerialRule}", (HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "") + (GUIDE ? GUIDE_RULE : "")
+      + (local.styleLocal ? STYLE_LOCAL_RULE(localN) : ""));
   if (GUIDE) prompt = prompt.replace(/1\. input\.png:[^\n]*\n/, GUIDE_IMAGE);
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
@@ -711,7 +736,7 @@ async function paintWindow(i: number, j: number) {
       console.log(`  ${i}_${j}: ${((Date.now() - t0) / 1000).toFixed(0)}s edges=${edges.join("+") || "-"} match=${r.score.toFixed(2)}`
         + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : ""));
       // keep qa.json + codex.log for debugging; the images are ~6 MB per window
-      for (const f of ["input.png", "height.png", "style.png", "trees.png", "aerial.png", "out.png", ...REFS.map((_, k) => `ref${k + 1}.png`)]) rmSync(join(work, f), { force: true });
+      for (const f of ["input.png", "height.png", "style.png", "trees.png", "style-local.png", "aerial.png", "out.png", ...REFS.map((_, k) => `ref${k + 1}.png`)]) rmSync(join(work, f), { force: true });
       return;
     }
     console.error(`  ${i}_${j}: attempt ${attempt} failed, see ${join(work, "codex.log")}`);
