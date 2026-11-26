@@ -27,6 +27,7 @@ import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
+import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
@@ -112,6 +113,12 @@ interface Local {
    */
   liftShadows?: number[];
   /**
+   * At assembly, bring each window's grass and tree crowns to the render's hue, saturation and value on the same
+   * cells (vegetation.ts), so the painting and the styled map around it read as one. Statistics are pooled over the
+   * 3×3 windows around each one (quiet seams) and cached in windows<-tag>-vegetation.json.
+   */
+  matchVegetation?: boolean;
+  /**
    * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
    * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
    * checking them on their own paintings.
@@ -186,7 +193,7 @@ species of image 4 by shape: rounded crowns in several greens = lime, maple, oak
 pale crowns on white trunks = birch; small round crowns = fruit trees; tall narrow columns = poplar; broad drooping \
 pale crowns = willow; dark tiered cones = spruce; a high flat crown on a bare trunk = pine; short dark columns = thuja.`,
     treesOf: "Kraków",
-    treeHint: " (broad rounded deciduous crowns in a natural, not too bright summer green, spruces as dark cones, pines with high flat crowns)",
+    treeHint: " (broad rounded deciduous crowns in the fresh green of image 1, spruces as dark cones, pines with high flat crowns)",
     materials: `Draw believable Kraków \
 and Lesser Poland materials: historic tenement houses (kamienice) in cream, ochre, salmon, pale yellow and grey plaster with \
 cornices, tall windows and red clay-tile roofs with dormers around courtyards; older districts mixing exposed red brick and \
@@ -200,8 +207,8 @@ trees, grass or water. Tall towers stay tall. Draw no trains, trams or buses any
 map): leave rail and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-poland.png"),
     styleLocal: join(PIPELINE, "style", "reference-poland.png"),
-    // Piotr's review of the Kraków pilot: asphalt, cars and shopfronts on the Old Town's pedestrian streets (the
-    // render's blue cast shadows read as asphalt), plaster turned brick, lime-green grass
+    // Piotr's review of the Kraków pilots: asphalt, cars and shopfronts on the Old Town's pedestrian streets (the
+    // render's blue cast shadows read as asphalt), plaster turned brick, greens that don't match the styled map
     rules: `- Pale cream, beige or stone-coloured ground in image 1 is PEDESTRIAN PAVING: squares, pedestrian streets, \
 passages and courtyards (in Kraków's Old Town and Kazimierz most streets are car-free). Paint it as pale stone slabs or \
 setts in the colour of image 1, with no asphalt, no lane markings, no crosswalks, no kerbs, no parked or moving cars, \
@@ -212,11 +219,12 @@ strip as asphalt, a road, water or another material; paint the surface under it 
 - Keep each wall's material and colour from image 1: plastered walls (white, cream, grey, yellow, ochre, pink, pastel) \
 stay plaster in that colour; draw red brick only where image 1's wall is red-brown. Keep each roof's colour: grey metal \
 roofs stay grey, red tile stays red, green copper stays green.
-- Grass, lawns and parks in a muted, natural mid green (slightly grey-green, like a lawn in late summer), never bright \
-lime or yellow-green.
+- Grass, lawns, parks and tree crowns keep the fresh, cool green of image 1: a clear mid green, never yellow-green, \
+olive or late-summer brown.
 `,
     groundChecks: { pedAsphalt: 120, pedObjects: 40, redWalls: 0.035 },
     liftShadows: [0.60, 0.64, 0.80], // styles.ts poland castShadow
+    matchVegetation: true,
   },
 };
 
@@ -815,6 +823,9 @@ async function liftShadows(png: Buffer, i: number, j: number, shade: number[]) {
   return sharp(data, { raw: info }).png().toBuffer();
 }
 
+let vegCache: VegetationCache | null = null;
+const vegetationCache = async () => (vegCache ??= new VegetationCache(await groundContext(), winDir));
+
 /** Ground classes of the area for groundChecks (built once, on the first window that needs them). */
 let groundCtx: ReturnType<typeof auditContext> | null = null;
 const groundContext = () => (groundCtx ??= auditContext(areaName));
@@ -961,7 +972,8 @@ async function assemble(all = false, only?: Set<string>) {
     if (!pixCache.has(key)) {
       if (pixCache.size >= 48) pixCache.delete(pixCache.keys().next().value!);
       pixCache.set(key, (async () => {
-        const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
+        let px: Buffer = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
+        if (local.matchVegetation) px = await matchedWindow(await groundContext(), await vegetationCache(), i, j, px);
         const off = offsets.get(key);
         if (off && off.some((v) => Math.abs(v) >= 0.5))
           for (let s = 0; s < px.length; s += 3) for (let c = 0; c < 3; c++) px[s + c] = Math.max(0, Math.min(255, Math.round(px[s + c] + off[c])));
@@ -1110,6 +1122,7 @@ async function assemble(all = false, only?: Set<string>) {
     written++;
   }
   writeFileSync(partialFile, JSON.stringify(partialTiles));
+  vegCache?.save();
   console.log(`  assembled ${written} art tiles`);
 }
 

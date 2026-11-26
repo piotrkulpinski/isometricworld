@@ -7,7 +7,8 @@
  *   pedObjects   pedestrian ground painted with saturated or dark objects (cars, shopfronts, umbrellas)
  *   redWalls     buildings painted brick/tile red where the render's colour is not red (plaster turned brick)
  *   streetTrees  road surface painted as tree or grass green where the render shows no green
- *   grass        mean saturation and value of painted grass (render grass cells)
+ *   greens       painted grass and tree crowns minus the render's on the same cells: hue, saturation, value
+ *                (the painted patch must read as one with the styled map around it)
  *   seam         mean colour difference with the right and bottom neighbour in their shared overlap
  *
  *   npm -w pipeline exec tsx src/paintaudit.ts krakow-test --tag krakow-pilot [--out <dir>] [--crops 12]
@@ -49,7 +50,9 @@ const RES = 0.5; // m per raster cell
 export interface Flaws {
   /** shares of the pedestrian cells, and their counts (a cell is ~1 m²) */
   window: string; ped: number; pedAsphalt: number; pedObjects: number; pedAsphaltCells?: number; pedObjectCells?: number; walls: number; redWalls: number;
-  road: number; streetTrees: number; grassCells: number; grassSat: number; grassVal: number; grassHue: number;
+  road: number; streetTrees: number;
+  /** painted minus render, mean over the cells where both are green: grass (ground) and crowns (above it) */
+  grassCells: number; grassDH: number; grassDS: number; grassDV: number; crownCells: number; crownDH: number; crownDS: number; crownDV: number;
   seamRight?: number; seamBottom?: number; match?: number;
 }
 
@@ -89,7 +92,7 @@ export async function auditContext(areaName: string, opts: { ground?: string; re
   };
   return { area, base, terrain, classAt, regionFile };
 }
-type Ctx = Awaited<ReturnType<typeof auditContext>>;
+export type Ctx = Awaited<ReturnType<typeof auditContext>>;
 
 function fillRings(cls: Uint8Array, W: number, H: number, rings: number[][][], c: number) {
   let y0 = Infinity, y1 = -Infinity;
@@ -126,7 +129,7 @@ function pixelToEn(px: number, py: number, u: number): [number, number] {
   return [(p * d - b * q) / det, (a * q - p * c) / det];
 }
 
-const hsv = (r: number, g: number, b: number) => {
+export const hsv = (r: number, g: number, b: number) => {
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
   let h = 0;
   if (d) h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
@@ -141,7 +144,7 @@ const isAsphalt = (r: number, g: number, b: number) => { const [, s, v] = hsv(r,
 const isObject = (r: number, g: number, b: number) => { const [h, s, v] = hsv(r, g, b); return (s > 0.42 && v > 0.25 && !(h >= 55 && h <= 170)) || v < 0.2; };
 
 /** Mean colour per 4×4 cell of a 1024² RGB buffer. */
-function cells(px: Buffer) {
+export function cells(px: Buffer) {
   const out = new Float32Array(N * N * 3);
   for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) {
     const s = (y * WIN + x) * 3, d = (Math.floor(y / CELL) * N + Math.floor(x / CELL)) * 3;
@@ -151,7 +154,7 @@ function cells(px: Buffer) {
   return out;
 }
 
-async function crop(ctx: Ctx, kind: "render" | "height", X: number, Y: number) {
+export async function crop(ctx: Ctx, kind: "render" | "height", X: number, Y: number) {
   const parts: any[] = [];
   for (let ty = Math.floor(Y / T); ty <= Math.floor((Y + WIN - 1) / T); ty++)
     for (let tx = Math.floor(X / T); tx <= Math.floor((X + WIN - 1) / T); tx++) {
@@ -206,7 +209,7 @@ export async function windowFlaws(ctx: Ctx, i: number, j: number, painting: stri
   const cls = classes ?? (await windowClasses(ctx, i, j));
   const R = cells((await crop(ctx, "render", i * STRIDE, j * STRIDE)) as Buffer);
   const P = cells(await sharp(painting).removeAlpha().resize(WIN, WIN).raw().toBuffer());
-  const f: Flaws = { window: `${i}_${j}`, ped: 0, pedAsphalt: 0, pedObjects: 0, walls: 0, redWalls: 0, road: 0, streetTrees: 0, grassCells: 0, grassSat: 0, grassVal: 0, grassHue: 0 };
+  const f: Flaws = { window: `${i}_${j}`, ped: 0, pedAsphalt: 0, pedObjects: 0, walls: 0, redWalls: 0, road: 0, streetTrees: 0, grassCells: 0, grassDH: 0, grassDS: 0, grassDV: 0, crownCells: 0, crownDH: 0, crownDS: 0, crownDV: 0 };
   const flags = new Uint8Array(N * N); // 1 asphalt, 2 object, 4 red wall, 8 street tree
   for (let k = 0; k < N * N; k++) {
     const r = [R[k * 3], R[k * 3 + 1], R[k * 3 + 2]] as const, p = [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]] as const;
@@ -216,22 +219,26 @@ export async function windowFlaws(ctx: Ctx, i: number, j: number, painting: stri
       if (isAsphalt(...p)) { f.pedAsphalt++; flags[k] |= 1; }
       else if (isObject(...p) && !isObject(...r)) { f.pedObjects++; flags[k] |= 2; }
     } else if (cls[k] === -1) {
-      if (isGreen(...r)) continue; // trees
+      if (isGreen(...r)) { // trees
+        if (isGreen(...p)) { const [ph, ps, pv] = hsv(...p), [rh, rs, rv] = hsv(...r); f.crownCells++; f.crownDH += ph - rh; f.crownDS += ps - rs; f.crownDV += pv - rv; }
+        continue;
+      }
       f.walls++;
       if (isRed(...p) && !isRed(...r)) { f.redWalls++; flags[k] |= 4; }
     } else if (cls[k] === ROAD) {
       f.road++;
       if (isGreen(...p) && !isGreen(...r)) { f.streetTrees++; flags[k] |= 8; }
     } else if (cls[k] === GRASS && isGreen(...r) && isGreen(...p)) {
-      const [h, s, v] = hsv(...p);
-      f.grassCells++; f.grassSat += s; f.grassVal += v; f.grassHue += h;
+      const [ph, ps, pv] = hsv(...p), [rh, rs, rv] = hsv(...r);
+      f.grassCells++; f.grassDH += ph - rh; f.grassDS += ps - rs; f.grassDV += pv - rv;
     }
   }
   f.pedAsphaltCells = f.pedAsphalt; f.pedObjectCells = f.pedObjects;
   if (f.ped) { f.pedAsphalt /= f.ped; f.pedObjects /= f.ped; }
   if (f.walls) f.redWalls /= f.walls;
   if (f.road) f.streetTrees /= f.road;
-  if (f.grassCells) { f.grassSat /= f.grassCells; f.grassVal /= f.grassCells; f.grassHue /= f.grassCells; }
+  if (f.grassCells) { f.grassDH /= f.grassCells; f.grassDS /= f.grassCells; f.grassDV /= f.grassCells; }
+  if (f.crownCells) { f.crownDH /= f.crownCells; f.crownDS /= f.crownCells; f.crownDV /= f.crownCells; }
   return { flaws: f, flags };
 }
 
@@ -266,6 +273,10 @@ const SEVERITY: Record<string, { value: (r: Flaws) => number | undefined; levels
   redWalls: { value: (r) => r.redWalls, levels: [0.06, 0.035, 0.02], show: (v) => `${(v * 100).toFixed(1)} % of buildings turned red` },
   streetTrees: { value: (r) => r.streetTrees, levels: [0.2, 0.1, 0.05], show: (v) => `${(v * 100).toFixed(1)} % of road painted green` },
   seam: { value: (r) => Math.max(r.seamRight ?? 0, r.seamBottom ?? 0) || undefined, levels: [50, 42, 36], show: (v) => `overlap differs by ${v.toFixed(0)}/255` },
+  // distance of the painted greens from the render's, in units of (8° hue, 0.08 saturation, 0.08 value)
+  greens: { value: (r) => (r.grassCells + r.crownCells < 200 ? undefined : Math.max(...[[r.grassDH, r.grassDS, r.grassDV, r.grassCells], [r.crownDH, r.crownDS, r.crownDV, r.crownCells]]
+    .filter((g) => g[3] >= 100).map(([h, s, v]) => Math.max(Math.abs(h) / 8, Math.abs(s) / 0.08, Math.abs(v) / 0.08)), 0)),
+    levels: [3, 2, 1.25], show: (v) => `greens ${v.toFixed(1)}× off the render's (1 = 8° hue or 0.08 saturation/value)` },
   geometry: { value: (r) => r.match, levels: [0.45, 0.5, 0.55], below: true, show: (v) => `edge match ${v.toFixed(2)}` },
 };
 /** Nearest named part of Kraków to a window centre (labels for the report). */
@@ -311,10 +322,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // summary
   const pct = (v: number) => `${(v * 100).toFixed(1)} %`;
   const mean = (k: keyof Flaws) => results.reduce((s, r) => s + ((r[k] as number) || 0), 0) / results.length;
-  const grass = results.filter((r) => r.grassCells > 200);
-  const gSat = grass.reduce((s, r) => s + r.grassSat * r.grassCells, 0) / grass.reduce((s, r) => s + r.grassCells, 0);
-  const gVal = grass.reduce((s, r) => s + r.grassVal * r.grassCells, 0) / grass.reduce((s, r) => s + r.grassCells, 0);
-  console.log(`${results.length} windows. mean pedAsphalt ${pct(mean("pedAsphalt"))}, pedObjects ${pct(mean("pedObjects"))}, redWalls ${pct(mean("redWalls"))}, streetTrees ${pct(mean("streetTrees"))}, grass sat ${gSat.toFixed(3)} val ${gVal.toFixed(3)}`);
+  const pooled = (n: "grassCells" | "crownCells", k: keyof Flaws) => results.reduce((s, r) => s + (r[k] as number) * (r[n] as number), 0) / Math.max(1, results.reduce((s, r) => s + (r[n] as number), 0));
+  const greens = (n: "grassCells" | "crownCells", p: "grass" | "crown") =>
+    `hue ${pooled(n, `${p}DH` as keyof Flaws).toFixed(1)}°, saturation ${pooled(n, `${p}DS` as keyof Flaws).toFixed(3)}, value ${pooled(n, `${p}DV` as keyof Flaws).toFixed(3)}`;
+  console.log(`${results.length} windows. mean pedAsphalt ${pct(mean("pedAsphalt"))}, pedObjects ${pct(mean("pedObjects"))}, redWalls ${pct(mean("redWalls"))}, streetTrees ${pct(mean("streetTrees"))}; painted minus render: grass ${greens("grassCells", "grass")}, crowns ${greens("crownCells", "crown")}`);
   // every flaw with a severity, worst first
   const found: Array<{ type: string; r: Flaws; v: number; sev: number }> = [];
   for (const r of results) for (const [type, f] of Object.entries(SEVERITY)) {
@@ -357,7 +368,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const counts = Object.keys(SEVERITY).map((t) => `${t} ${found.filter((f) => f.type === t).length} (high ${found.filter((f) => f.type === t && f.sev === 3).length})`);
   writeFileSync(join(out, "flaws.md"), `# Paint audit: ${areaName}${args.tag ? ` --tag ${args.tag}` : ""}\n\n${results.length} windows. Flaws per type (windows): ${counts.join(", ")}.\n`
-    + `Painted grass: saturation ${gSat.toFixed(3)}, value ${gVal.toFixed(3)} (render grass cells).\n\n`
+    + `Painted minus render on the same cells: grass ${greens("grassCells", "grass")}; crowns ${greens("crownCells", "crown")}.\n\n`
     + `Crops: render | painting | painting with the flagged cells in magenta.\n\n| Window | Place | Flaw | Severity | Value | Crop |\n|---|---|---|---|---|---|\n${rows.join("\n")}\n`);
   // contact sheet of the worst crops (one per window and type, at most --crops)
   const pick = sheet.slice(0, Number(args.crops));
