@@ -27,6 +27,10 @@ import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
 import { lowDisk } from "./diskguard.ts";
+import { REGIONS } from "./places.ts";
+import { regionWindows } from "./windowplan.ts";
+/** --min-buildings: a window with this many buildings (≥ 40 m² each) is painted whatever its share (a hamlet's edge). */
+const MIN_BUILDINGS_N = 10;
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
@@ -332,6 +336,14 @@ const { values: args, positionals } = parseArgs({
     // extra reference photos, comma-separated (public domain / CC0 only: their pixels reach the painting): what the
     // objects of this place look like (e.g. fairground rides), never where they stand
     ref: { type: "string" },
+    // only windows that touch the region's outline (places.ts outline; a grid region's city boundary)
+    outline: { type: "boolean", default: false },
+    // skip unpainted windows whose building footprint share (windowplan.ts) is below this and that hold fewer than
+    // MIN_BUILDINGS_N buildings: fields, forest, water and allotments keep the styled render, faded into the painted
+    // neighbours across the overlap (Kraków: 0.02)
+    "min-buildings": { type: "string" },
+    // seam previews (with --tag and --assemble): treat these windows as skipped, e.g. "-17_-29,-22_-33"
+    skip: { type: "string" },
   },
 });
 const GUIDE = args.guide ? { file: args.guide, box: args["guide-frame"]!.split(",").map(Number) } : null;
@@ -349,7 +361,7 @@ const areaName = positionals[0] ?? "tlv-core";
 const base = join(DERIVED, areaName);
 const manifest = readJson(join(base, "manifest.json"));
 const AREA = openArea(areaName), title = AREA.title;
-const local = LOCAL[AREA.region];
+const local = LOCAL[AREA.region] ?? LOCAL[REGIONS[AREA.region].gridOf ?? ""];
 if (!local) throw new Error(`paint: no prompt for region ${AREA.region} (LOCAL in paint.ts)`);
 const OLDER = args.older ? new Date(args.older).getTime() : 0;
 const mtime = (f: string) => (existsSync(f) ? statSync(f).mtimeMs : 0);
@@ -688,7 +700,7 @@ async function dropDarkWindows(wins: Array<[number, number]>) {
 const MAX_USES = 12;
 
 async function facadeNotes(i: number, j: number) {
-  const here = FACADES.filter((f) => f.region === AREA.region);
+  const here = FACADES.filter((f) => f.region === AREA.region || f.region === REGIONS[AREA.region].gridOf);
   const pois = AREA.region === "israel-center" ? [] : await areaPois(areaName, AREA);
   if (!here.length && !pois.length) return "";
   const ground = await windowGround(i * STRIDE, j * STRIDE);
@@ -1069,6 +1081,14 @@ async function assemble(all = false, only?: Set<string>) {
     return weightCache.get(key)!;
   };
 
+  /** window (i,j)'s fade towards neighbours skipped for good (SKIP): 1 inside, easing to 0 at a skipped side */
+  const smooth = (t: number) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
+  const fadeOf = (i: number, j: number) => {
+    const l = SKIP.has(`${i - 1}_${j}`), r = SKIP.has(`${i + 1}_${j}`), u = SKIP.has(`${i}_${j - 1}`), d = SKIP.has(`${i}_${j + 1}`);
+    if (!(l || r || u || d)) return null;
+    return (x: number, y: number) => (l ? smooth(x / OVERLAP) : 1) * (r ? smooth((WIN - 1 - x) / OVERLAP) : 1) * (u ? smooth(y / OVERLAP) : 1) * (d ? smooth((WIN - 1 - y) / OVERLAP) : 1);
+  };
+
   mkdirSync(join(base, `paint${SUFFIX}`), { recursive: true });
   let written = 0, withdrawn: string | undefined;
   // tile -> the windows a partial tile was assembled from (a full tile uses all that cover it: not listed)
@@ -1103,8 +1123,10 @@ async function assemble(all = false, only?: Set<string>) {
       && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))
       && !(partial && existsSync(renderFile(tx, ty)) && mtime(renderFile(tx, ty)) > mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
+    // painted share per pixel where a window fades out towards a skipped neighbour (the render shows the rest)
+    const fade = have.some(([i, j]) => fadeOf(i, j)) ? new Float32Array(T * T) : null;
     for (const [i, j] of have) {
-      const px = await windowPixels(i, j), ww = await windowWeights(i, j);
+      const px = await windowPixels(i, j), ww = await windowWeights(i, j), f = fadeOf(i, j);
       const ox = i * STRIDE - tx * T, oy = j * STRIDE - ty * T;
       for (let y = Math.max(0, oy); y < Math.min(T, oy + WIN); y++)
         for (let x = Math.max(0, ox); x < Math.min(T, ox + WIN); x++) {
@@ -1115,6 +1137,7 @@ async function assemble(all = false, only?: Set<string>) {
           if (w <= 0) continue;
           acc[d * 3] += px[s] * w; acc[d * 3 + 1] += px[s + 1] * w; acc[d * 3 + 2] += px[s + 2] * w;
           wsum[d] += w;
+          if (fade) fade[d] = Math.max(fade[d], f ? f(wx, wy) : 1);
         }
     }
     const out = Buffer.alloc(T * T * 3);
@@ -1124,6 +1147,8 @@ async function assemble(all = false, only?: Set<string>) {
       const w = wsum[d];
       for (let c = 0; c < 3; c++)
         out[d * 3 + c] = render && w < 1e-3 ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
+      if (render && fade && w >= 1e-3 && fade[d] < 1)
+        for (let c = 0; c < 3; c++) out[d * 3 + c] = Math.round(out[d * 3 + c] * fade[d] + render[d * 3 + c] * (1 - fade[d]));
     }
     await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`));
     if (partial) partialTiles[k] = used; else delete partialTiles[k];
@@ -1134,6 +1159,9 @@ async function assemble(all = false, only?: Set<string>) {
   vegCache?.save();
   console.log(`  assembled ${written} art tiles`);
 }
+
+/** Windows left unpainted for good (--outline, --min-buildings): painted neighbours fade into the render towards them. */
+let SKIP = new Set<string>();
 
 /** Set when free disk space ran out: no new window starts, the run ends after the ones in flight (exit code 3). */
 let diskStop: string | null = null;
@@ -1152,6 +1180,15 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
 
 async function main() {
   let wins = windows();
+  for (const k of args.skip?.split(",") ?? []) SKIP.add(k.trim());
+  if (args.outline || args["min-buildings"]) {
+    const info = regionWindows(areaName), min = Number(args["min-buildings"] ?? 0);
+    const painted = (k: string) => existsSync(join(winDir, `${k}.png`)) || SIBLINGS.some((d) => existsSync(join(d, "windows", `${k}.png`)));
+    for (const [k, w] of info) if (((args.outline && !w.inside) || (w.share < min && w.buildings < MIN_BUILDINGS_N)) && !painted(k)) SKIP.add(k);
+    const before = wins.length;
+    wins = wins.filter(([i, j]) => !SKIP.has(`${i}_${j}`));
+    console.log(`  ${before - wins.length} of ${before} windows skipped (${args.outline ? "outside the outline, " : ""}building share < ${(min * 100).toFixed(1)} %)`);
+  }
   if (args.near) {
     const [lat, lon] = args.near.split(",").map(Number);
     const [x, y] = await groundPixel(join(base, "height"), lat, lon);
