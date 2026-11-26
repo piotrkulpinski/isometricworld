@@ -327,6 +327,7 @@ function frame(t: number) {
   if (trains && above && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
     trains.step(dt);
     trains.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+    foreground?.draw(ctx, k, tx, ty, trains.boxes);
   }
   if (traffic && above && px >= 0.14) {
     traffic.step(dt);
@@ -340,6 +341,7 @@ function frame(t: number) {
   if (carriages && above && px >= 0.2) {
     carriages.step(dt);
     carriages.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+    foreground?.draw(ctx, k, tx, ty, carriages.boxes);
   }
   if (pecking && above) { // they keep pecking (and taking off) out of sight too: cheap
     pecking.step(dt);

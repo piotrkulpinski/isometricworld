@@ -361,8 +361,18 @@ export class Trains {
     });
     items.sort((a, b) => b.depth - a.depth);
     this.drawn = items.length;
-    for (const it of items) this.box(ctx, proj, it.c, it.d, it.g, it.car, it.a);
+    this.boxes = [];
+    for (const it of items) {
+      // its canvas box, for the foreground drawn over it (foreground.ts): trams pass behind houses, not over them
+      const R = Math.max(it.car.len, it.car.wid) / 2 + 4.5, c = it.c;
+      const pts = [proj([c[0] - R, c[1] - R, c[2]]), proj([c[0] + R, c[1] - R, c[2]]), proj([c[0] - R, c[1] + R, c[2]]), proj([c[0] + R, c[1] + R, c[2]]), proj([c[0], c[1], c[2] + 4.5])];
+      this.boxes.push([Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1]))]);
+      this.box(ctx, proj, it.c, it.d, it.g, it.car, it.a);
+    }
   }
+
+  /** canvas boxes of the cars drawn last ([x0, y0, x1, y1]): where the foreground goes over them */
+  boxes: number[][] = [];
 
   /**
    * Every car now: `near(head)` picks the trains (by their front, ENU), then `car(key, centre, heading,

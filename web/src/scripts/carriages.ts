@@ -97,8 +97,18 @@ export class Carriages {
       items.push({ c, p: mid.p, d: mid.d, depth: mid.p[0] * this.camFwd[0] + mid.p[1] * this.camFwd[1] });
     }
     items.sort((a, b) => b.depth - a.depth); // back to front
-    for (const { c, p, d } of items) this.carriage(ctx, proj, p, d, c);
+    this.boxes = [];
+    for (const { c, p, d } of items) {
+      // its canvas box, for the foreground drawn over it (foreground.ts): hidden behind the houses it passes
+      const R = LEN / 2 + 3;
+      const pts = [proj([p[0] - R, p[1] - R, p[2]]), proj([p[0] + R, p[1] - R, p[2]]), proj([p[0] - R, p[1] + R, p[2]]), proj([p[0] + R, p[1] + R, p[2]]), proj([p[0], p[1], p[2] + 3])];
+      this.boxes.push([Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1]))]);
+      this.carriage(ctx, proj, p, d, c);
+    }
   }
+
+  /** canvas boxes of the carriages drawn last ([x0, y0, x1, y1]): where the foreground goes over them */
+  boxes: number[][] = [];
 
   /** one carriage: centre `c` on the ground, travelling along `d`; the horse in front */
   private carriage(ctx: CanvasRenderingContext2D, proj: (p: Vec3) => [number, number], c: Vec3, d: [number, number], car: Carriage) {

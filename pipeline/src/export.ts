@@ -421,7 +421,31 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
  * the stamps of the render tiles they cover. Every level is built from the render tiles directly.
  */
 const FG_MIN_Z = 5;
-async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = FG_MIN_Z) {
+/**
+ * Painted tiles' foreground: the painting's own pixels (the render's would show as a box of other colours around
+ * every vehicle), under the render's mask grown by this many px, so roofs the painter drew a little wider than the
+ * model still cover the vehicles behind them.
+ */
+const FG_PAINT_GROW = 8;
+
+/** Grow a 1-channel mask by r px (square max filter, separable). */
+function growMask(m: Buffer, size: number, r: number) {
+  const tmp = Buffer.alloc(m.length), out = Buffer.alloc(m.length);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    let v = 0;
+    for (let d = Math.max(0, x - r); d <= Math.min(size - 1, x + r); d++) if (m[y * size + d] > v) v = m[y * size + d];
+    tmp[y * size + x] = v;
+  }
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    let v = 0;
+    for (let d = Math.max(0, y - r); d <= Math.min(size - 1, y + r); d++) if (tmp[d * size + x] > v) v = tmp[d * size + x];
+    out[y * size + x] = v;
+  }
+  return out;
+}
+
+/** `painted`: the map's painted tiles (their foreground takes the painting's pixels, FG_PAINT_GROW). */
+async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = FG_MIN_Z, painted = new Map<Key, string>()) {
   const root = join(OUT, "tiles", layer), st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
   index[layer] = {};
   const maskOf = (file: string) => file.replace(/\/render\/([^/]+)$/, "/fg/$1");
@@ -436,7 +460,8 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
       const g = edgeGrid((tx * SPLIT + i) * TS, (ty * SPLIT + j) * TS);
       grids.push(g ? hash(Buffer.from(g.buffer)) : "in");
     }
-    stampOf.set(k, hash(`fg1:${sourceHash(f)}:${sourceHash(maskOf(f))}:${grids.join(",")}@${FORMAT}${QUALITY}`));
+    const paint = painted.get(k), over = paint && paint !== REMOTE && existsSync(paint) ? `:paint${FG_PAINT_GROW}:${sourceHash(paint)}` : "";
+    stampOf.set(k, hash(`fg1:${sourceHash(f)}:${sourceHash(maskOf(f))}:${grids.join(",")}${over}@${FORMAT}${QUALITY}`));
   }
   const pubHash = (z: number, x: number, y: number) => st.hashes[`${z}/${x}_${y}`];
   // a render tile as RGBA, its alpha the mask faded at the map's edge (a few kept: the levels out reuse them)
@@ -450,7 +475,10 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
         if (!pubHash(NATIVE_Z - 1, tx, ty)) return Buffer.alloc(A * A * 4); // nothing tall there
         return sharp(await readTile(layer, NATIVE_Z - 1, tx, ty)).ensureAlpha().resize(A, A, { kernel: "lanczos3" }).raw().toBuffer();
       }
-      const rgb = await sharp(f).removeAlpha().raw().toBuffer(), mask = await sharp(maskOf(f)).extractChannel(0).raw().toBuffer();
+      const paint = painted.get(k), own = paint && paint !== REMOTE && existsSync(paint) ? paint : null;
+      const rgb = await sharp(own ?? f).removeAlpha().resize(A, A).raw().toBuffer();
+      let mask = await sharp(maskOf(f)).extractChannel(0).raw().toBuffer();
+      if (own) mask = growMask(mask, A, FG_PAINT_GROW);
       const out = Buffer.alloc(A * A * 4);
       for (let p = 0; p < A * A; p++) { out[p * 4] = rgb[p * 3]; out[p * 4 + 1] = rgb[p * 3 + 1]; out[p * 4 + 2] = rgb[p * 3 + 2]; out[p * 4 + 3] = mask[p]; }
       for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++) {
@@ -1371,7 +1399,7 @@ async function main() {
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...mapOnly, ...photo, ...art, ...cut])); // painted wins; cutouts win over both: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);
-    if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo);
+    if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo, "fg", FG_MIN_Z, art);
     if (mineLevels.length) await exportMine(mineLevels);
     if (REGIONS[activeRegion()].effects?.fly) await exportHeights(photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
