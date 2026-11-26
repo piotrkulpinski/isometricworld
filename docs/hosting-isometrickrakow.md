@@ -72,6 +72,9 @@ hash-checked. Run it again only to start over from isometriccity.com.
 
 ## Publish
 
+First publish on 2026-11-26: 73,641 files uploaded and checked in 3,881 s; the state is in `WEB_STATE`.
+Deployed the same day (Worker `isometrickrakow`, version `7773c405-e9da-4307-a755-9e0de4ad37d8`).
+
 ```sh
 R2_ACCESS_KEY_ID="$(curl -s -H "Authorization: Bearer $(op read "$TOKEN_REF")" \
     https://api.cloudflare.com/client/v4/accounts/f6459ac25378c8bf184c4104889d9272/tokens/verify | jq -r .result.id)" \
@@ -98,10 +101,10 @@ serves the static pages and the `/p/*` analytics proxy. Analytics stay off until
 
 ## One-time Cloudflare setup
 
-Done on 2026-11-26 with the Workers deploy token: the custom domain `tiles.isometrickrakow.com` on the bucket
-and its CORS rule. Not done: the `www` record and redirect. That token has R2 and Workers access but no DNS or
-rulesets access on the zone (HTTP 403), so run the last two calls with a token that has Zone DNS Edit and
-Single Redirect Edit on `isometrickrakow.com`, or through Executor's Cloudflare account.
+All done on 2026-11-26. The Workers deploy token set the custom domain `tiles.isometrickrakow.com` on the bucket
+and its CORS rule. That token has R2 and Workers access but no DNS or rulesets access on the zone (HTTP 403), so
+the `www` record and the redirect ruleset (id `95cf232b08244708883de3864206e6a3`) went through Executor's
+Cloudflare account. To repeat them, use a token with Zone DNS Edit and Single Redirect Edit on the zone.
 
 ```sh
 CF=https://api.cloudflare.com/client/v4 A=f6459ac25378c8bf184c4104889d9272 Z=efef42db8d10b9207333e152b2606c1a
