@@ -40,7 +40,9 @@ const ORDER = [GRASS, PATH, PED, ROAD];
  * widen pedestrian lines to this before anything else is drawn (buildings are cut out by height, roads and lawns
  * drawn later win).
  */
-const PED_STREET_W = 16;
+const PED_STREET_W = 12;
+/** Roads drawn this much wider than OSM's width (kerbs, the render's pavements, misregistration): never pedestrian. */
+const ROAD_MARGIN = 3;
 const RES = 0.5; // m per raster cell
 
 export interface Flaws {
@@ -72,7 +74,7 @@ export async function auditContext(areaName: string, opts: { ground?: string; re
     for (const f of features) {
       if (CLASS_OF[f.k] !== c || f.b) continue; // skip bridge decks (drawn above the ground)
       if (f.r) fillRings(cls, W, H, f.r.map((r: number[][]) => r.map(toCell)), c);
-      else if (f.l) strokeLine(cls, W, H, f.l.map(toCell), (f.w ?? 2) / RES / 2, c);
+      else if (f.l) strokeLine(cls, W, H, f.l.map(toCell), ((f.w ?? 2) + (c === ROAD ? ROAD_MARGIN : 0)) / RES / 2, c);
     }
   const classAt = (e: number, n: number) => {
     const x = Math.floor((e - meta.x0) / RES), y = Math.floor((n - meta.y0) / RES);
@@ -133,7 +135,7 @@ const hsv = (r: number, g: number, b: number) => {
 const isRed = (r: number, g: number, b: number) => { const [h, s, v] = hsv(r, g, b); return (h <= 28 || h >= 340) && s > 0.45 && v > 0.3 && v < 0.92; }; // not brown ballast or dark wood
 const isGreen = (r: number, g: number, b: number) => { const [h, s] = hsv(r, g, b); return h >= 55 && h <= 170 && s > 0.2; };
 /** asphalt: mid grey, nearly unsaturated */
-const isAsphalt = (r: number, g: number, b: number) => { const [, s, v] = hsv(r, g, b); return s < 0.16 && v > 0.2 && v < 0.6; };
+const isAsphalt = (r: number, g: number, b: number) => { const [, s, v] = hsv(r, g, b); return s < 0.16 && v > 0.2 && v < 0.62 && b >= r - 2; }; // cool grey: warm paving-pattern lines are not asphalt
 /** a car, shopfront, umbrella: saturated and not green, or very dark */
 const isObject = (r: number, g: number, b: number) => { const [h, s, v] = hsv(r, g, b); return (s > 0.42 && v > 0.25 && !(h >= 55 && h <= 170)) || v < 0.2; };
 
