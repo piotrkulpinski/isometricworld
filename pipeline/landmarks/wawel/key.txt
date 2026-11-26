@@ -1,0 +1,3 @@
+This is a map of Wawel Hill in Kraków with the Wawel Royal Castle (cream Renaissance castle with red tile roofs around an arcaded courtyard) and the Wawel Cathedral (green copper roofs and domes, one gold dome, tall towers).
+- KEEP, pixel for pixel exactly as they are: the whole castle (all four wings, roofs, towers, the arcaded courtyard and its paving) and the whole cathedral with its chapels, domes and towers, down to the foot of their walls.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the lawns, paths, the square in front of the cathedral, the fortification walls and slopes, trees, streets and every other building.

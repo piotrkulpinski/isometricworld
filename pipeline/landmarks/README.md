@@ -15,3 +15,6 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   --style reference-simple.png`, refs from `data/raw/photos/neues-schloss/`, `kunstgebaeude/`, `landtag/`, `oper/` +
   `schauspielhaus/` (PD/CC0/CC BY, see ATTRIBUTION.md). No edits. The Landtag key was run twice (the first came back
   tinted instead of flat magenta: check that the mask is a few % of the frame).
+- `wawel` (krakow-test, Wawel Royal Castle and Cathedral): frame -15641,-33493,1536,1024, `--base paint --tag
+  krakow-pilot-2c` (an experiment: reads paint-krakow-pilot-2c/, records into cutouts-krakow-pilot-2c.json), refs from
+  `data/raw/photos/wawel/` (CC BY, see ATTRIBUTION.md). No edits; the first overview read as Wawel (match 0.91).

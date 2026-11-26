@@ -3,6 +3,8 @@
  * out along its own painted outline with a chroma key. Fixes what window-by-window painting can't: each window invents
  * its own fair (five Ferris wheels, hard seams), and LoD2 massing gets painted literally (a stadium as an office ring).
  *
+ *   --tag <tag> (every command): an experiment: --base paint reads paint-<tag>/, key records into cutouts-<tag>.json
+ *       (then cutout.ts --tag, export --paint-tag), so nothing reaches the area's real paint/ or cutouts.json.
  *   npm -w pipeline exec tsx src/landmark.ts <area> <name> overview --frame x,y,w,h [--base paint|render] [--aerial [--aerial-source lgl|city]]
  *       [--style reference-simple.png] [--ref data/raw/photos/<dir>/<file>]…
  *       → landmark-<name>/art.png: frame (global art px, 3:2 or 2:3) painted at 1536×1024 (1024×1536) from pipeline/landmarks/<name>/overview.txt.
@@ -36,6 +38,7 @@ const { values: args, positionals } = parseArgs({
   options: {
     frame: { type: "string" }, base: { type: "string", default: "paint" }, aerial: { type: "boolean", default: false }, "aerial-source": { type: "string", default: "lgl" },
     style: { type: "string", default: "reference.png" }, ref: { type: "string", multiple: true, default: [] }, box: { type: "string" },
+    tag: { type: "string" },
   },
 });
 const [areaName, name, cmd, promptArg] = positionals;
@@ -103,7 +106,7 @@ if (cmd === "overview") {
     }
   hs.sort((a, b) => a - b);
   const ground = hs[Math.floor(hs.length * 0.05)];
-  await mosaic(args.base === "paint" ? tile("paint", "render") : tile("render"), "input.png");
+  await mosaic(args.base === "paint" ? tile(args.tag ? `paint-${args.tag}` : "paint", "render") : tile("render"), "input.png");
   await mosaic(async (tx, ty) => {
     const f = join(base, "height", `${tx}_${ty}.png`);
     if (!existsSync(f)) return null;
@@ -206,7 +209,7 @@ ${output(join(dir, "key.png"))}`;
   let n = 0;
   for (const v of out) if (v) n++;
   console.log(`key: ${s.toFixed(0)}s, kept pixels drift ${(drift / Math.max(1, kept) / 3).toFixed(1)} (0 = untouched), mask ${(n / out.length * 100).toFixed(1)}% of the frame`);
-  const listFile = join(base, "cutouts.json"), list: any[] = existsSync(listFile) ? readJson(listFile) : [];
+  const listFile = join(base, args.tag ? `cutouts-${args.tag}.json` : "cutouts.json"), list: any[] = existsSync(listFile) ? readJson(listFile) : [];
   const key = { mask: `landmark-${name}/mask.png`, frame: meta.frame, grow: 5, feather: 4, ...(native ? { art: `landmark-${name}/art.png` } : {}) };
   const old = list.find((c) => c.name === name);
   if (old) old.key = key; else list.push({ name, key });

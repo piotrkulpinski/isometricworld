@@ -16,6 +16,8 @@
  *         grid windows (paint.ts --window "i,j;i,j;…" continues each from its painted neighbours); the cut reads
  *         the assembled paint-cutout-<name>/ tiles. A lot that is itself a construction site keeps its sites.
  *   npm -w pipeline exec tsx src/cutout.ts stuttgart-core          # recompose every cutout (after a re-render)
+ *   npm -w pipeline exec tsx src/cutout.ts krakow-test --tag krakow-pilot-2c
+ *       → an experiment's cutouts (landmark.ts --tag): cutouts-<tag>.json over paint-<tag>/, into cutout-<tag>/
  *
  * Tiles go to <area>/cutout/<tx>_<ty>.png: the tile as the map shows it (the area's painted tile where there is one,
  * else the render) with the cutout on top; export layers them as render < paint < cutout.
@@ -61,11 +63,13 @@ const CELL = 4; // height pass resolution (art px)
 /** room a silhouette needs to the window edge (the painter is least reliable at the border) */
 const MARGIN = 48;
 
-const [name, ...rest] = process.argv.slice(2);
-if (!name) throw new Error("usage: cutout.ts <area> [--plan|--add <name> <lat,lon>]");
+const argv = process.argv.slice(2), tagAt = argv.indexOf("--tag"), TAG = tagAt >= 0 ? argv.splice(tagAt, 2)[1] : "";
+const SUFFIX = TAG ? `-${TAG}` : "";
+const [name, ...rest] = argv;
+if (!name) throw new Error("usage: cutout.ts <area> [--plan|--add <name> <lat,lon>] [--tag <tag>]");
 const area = openArea(name);
 const base = join(DERIVED, name);
-const listFile = join(base, "cutouts.json");
+const listFile = join(base, `cutouts${SUFFIX}.json`);
 const list: Cutout[] = existsSync(listFile) ? readJson(listFile) : [];
 
 /** the LoD2 building at (lat, lon) and every building part touching it (wings, towers) */
@@ -334,7 +338,7 @@ async function paintedFrame(c: Cutout, fr: Frame): Promise<Buffer | null> {
 
 /** rebuild every cutout tile of the area: the map's tile (painted, else rendered) + the cutouts over it */
 async function compose() {
-  const out = join(base, "cutout");
+  const out = join(base, `cutout${SUFFIX}`);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   const tiles = new Map<string, Array<{ fr: Frame; img: Buffer; a: Buffer }>>();
@@ -350,7 +354,7 @@ async function compose() {
         tiles.set(`${tx}_${ty}`, [...(tiles.get(`${tx}_${ty}`) ?? []), { fr, img, a }]);
   }
   for (const [k, cuts] of tiles) {
-    const [tx, ty] = k.split("_").map(Number), painted = join(base, "paint", `${k}.png`), render = join(base, "render", `${k}.png`);
+    const [tx, ty] = k.split("_").map(Number), painted = join(base, `paint${SUFFIX}`, `${k}.png`), render = join(base, "render", `${k}.png`);
     if (!existsSync(render)) continue;
     const px = await sharp(existsSync(painted) ? painted : render).removeAlpha().resize(T, T).raw().toBuffer();
     let used = 0;

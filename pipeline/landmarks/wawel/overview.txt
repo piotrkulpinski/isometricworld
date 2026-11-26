@@ -1,0 +1,14 @@
+EDIT image 1, the painted map of Wawel Hill in Kraków, in EXACTLY its own style and the style of image 3: crisp clean isometric illustration, fine detail, soft even daylight, light ambient occlusion, no long shadows, no photographic noise.
+
+Two buildings in image 1 are wrong and must be repainted as they really are (see the photos, images 4-8; they say nothing about position or size):
+
+1. The WAWEL ROYAL CASTLE (the large four-wing building around a square courtyard, south-east of the cathedral). In image 1 its walls came out as a blue-grey glass grid like an office or a prison: that is wrong. Repaint it as the Renaissance royal castle:
+- Every wall in warm cream / off-white plaster with regular stone-framed Renaissance windows in rows (no glass curtain walls, no grids of panes, no blue-grey walls anywhere).
+- Steep red clay-tile hipped roofs with small dormers and tall chimneys, as in image 1.
+- The famous arcaded courtyard: on the four inner sides of the courtyard, THREE storeys of open Renaissance galleries (loggias): round arches on slender columns on the two lower floors, a tall top floor of very slender columns carrying the roof eaves; deep shadow behind the arches. The courtyard floor is light stone paving.
+- The corner towers keep their shapes from image 1: give them cream plaster and green copper or red tile caps as in the photos; the south-east one with its loggia bay.
+- The castle stands behind the red-brick fortification walls with battlements along the slope (keep them where image 1 has them, in red brick with pale stone).
+
+2. The WAWEL CATHEDRAL (north-west of the castle): keep its footprint, roofs and towers exactly where they are and refine its look: Gothic walls of pale stone and red-brown brick with tall pointed windows, green copper roofs, the green copper domes of the side chapels, and among them the gilded GOLD dome of the Sigismund Chapel (a small square chapel with a golden dome and lantern on the south side of the cathedral nave); the tall towers with green copper and gilded spires.
+
+Everything else (the hill, lawns, paths, the courtyard square in front of the cathedral, trees, streets, the river bank, every other building) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. Same camera and scale as image 1; every footprint, roof outline and height exactly as in images 1 and 2. No text, lettering, banners, flags, signs or people.

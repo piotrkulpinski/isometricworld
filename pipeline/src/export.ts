@@ -161,7 +161,7 @@ const SCOPE_MARGIN = 1024 + 16;
 const PARTIAL = process.argv.includes("--partial");
 /** --paint-tag <tag>: take each area's paint-<tag>/ (an experiment, paint.ts --tag) instead of paint/ */
 const PAINT_TAG = (() => { const i = process.argv.indexOf("--paint-tag"); return i > 0 ? process.argv[i + 1] : undefined; })();
-const PAINT_DIR = PAINT_TAG ? `paint-${PAINT_TAG}` : "paint";
+const PAINT_DIR = PAINT_TAG ? `paint-${PAINT_TAG}` : "paint", CUT_DIR = PAINT_TAG ? `cutout-${PAINT_TAG}` : "cutout";
 const REMOTE = "<published>";
 const hash = (b: Buffer | string) => createHash("sha1").update(b).digest("hex").slice(0, 10);
 const pendingFile = () => join(WEB_CACHE, `${activeRegion()}.state.json`);
@@ -336,7 +336,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
       continue;
     }
     // a cutout tile laid on a painted tile (cutout.ts) is painted too: it gets the bridge decks
-    const painted = layer === "map" && (file.includes(`/${PAINT_DIR}/`) || (file.includes("/cutout/") && existsSync(file.replace("/cutout/", "/paint/"))));
+    const painted = layer === "map" && (file.includes(`/${PAINT_DIR}/`) || (file.includes(`/${CUT_DIR}/`) && existsSync(file.replace(`/${CUT_DIR}/`, `/${PAINT_DIR}/`))));
     const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
       for (let i = 0; i < SPLIT; i++) {
@@ -447,10 +447,13 @@ const isCrown = (r: number, g: number, b: number) => Math.max(r, g, b) < 140 && 
 let paintedArt = new Map<Key, string>();
 const paintedPx = new Map<Key, Promise<Buffer>>();
 /**
- * On a painted tile: is the ground point at art pixel (x, y) under a painted tree crown? (most of a 5×5 px patch
- * vegetation green, the road itself never is). null: not on a painted tile here.
+ * On a painted tile: is a vehicle standing at art pixel (x, y) mostly under painted tree crowns? The share of its
+ * screen box (half width `rx` px, `up` px above the ground point for its height, a few below) that is crown green;
+ * hidden from COVERED on, so a tram fades out before it breaks into slivers between the crowns.
+ * null: not on a painted tile here.
  */
-async function paintedCover(x: number, y: number): Promise<boolean | null> {
+const COVERED = 0.4;
+async function paintedCover(x: number, y: number, rx = 6, up = 8, covered = COVERED): Promise<boolean | null> {
   const tx = Math.floor(x / CAMERA.tile), ty = Math.floor(y / CAMERA.tile), k = key(tx, ty), f = paintedArt.get(k);
   if (!f || f === REMOTE || !existsSync(f)) return null;
   let px = paintedPx.get(k);
@@ -461,13 +464,13 @@ async function paintedCover(x: number, y: number): Promise<boolean | null> {
   }
   const b = await px, lx = Math.round(x - tx * CAMERA.tile), ly = Math.round(y - ty * CAMERA.tile);
   let n = 0, g = 0;
-  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+  for (let dy = -up; dy <= 3; dy++) for (let dx = -rx; dx <= rx; dx++) {
     const xx = lx + dx, yy = ly + dy;
     if (xx < 0 || yy < 0 || xx >= CAMERA.tile || yy >= CAMERA.tile) continue;
     const o = (yy * CAMERA.tile + xx) * 3;
     n++; if (isCrown(b[o], b[o + 1], b[o + 2])) g++;
   }
-  return g > n / 2;
+  return n > 0 && g / n >= covered;
 }
 
 /** Grow a 1-channel mask by r px (square max filter, separable). */
@@ -903,7 +906,7 @@ const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ec
 async function keyMasks(areas: string[]) {
   const masks: Array<{ x: number; y: number; sx: number; sy: number; mw: number; mh: number; a: Buffer }> = [];
   for (const area of areas) {
-    const f = join(DERIVED, area, "cutouts.json");
+    const f = join(DERIVED, area, PAINT_TAG ? `cutouts-${PAINT_TAG}.json` : "cutouts.json");
     if (!existsSync(f)) continue;
     for (const c of readJson(f)) {
       if (!c.key) continue;
@@ -1135,7 +1138,8 @@ async function exportTrains(areas: string[], heights: Heights) {
         const [e0, n0] = latLonEnu(lat, lon), ground = terrainU(e0, n0);
         const ud = deck ? deck.at(cum + d * f, e0, n0) : ground;
         const p = await placePoint(heights, lat, lon, ud !== null && Number.isFinite(ud) ? ud : null);
-        const crown = REGIONS[activeRegion()].life?.foreground ? await paintedCover(p.x, p.y) : null; // painted tiles: see exportRoads
+        // painted tiles: see exportRoads; a tram's box: ~2.5 m wide, ~3.5 m tall (art px: 0.25 m, heights × 2.8)
+        const crown = REGIONS[activeRegion()].life?.foreground ? await paintedCover(p.x, p.y, 7, 12, 0.25) : null; // trams: fade sooner
         const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : crown === null ? p.vis : crown ? 0 : 1;
         total++; hidden += 1 - vis;
         samples.push(Math.round(p.e[0] * 10) / 10, Math.round(p.e[1] * 10) / 10, Math.round(p.e[2] * 10) / 10, vis);
@@ -1412,7 +1416,7 @@ async function main() {
     const dir = join(DERIVED, a);
     const m = readJson(join(dir, "manifest.json"));
     (m.attributions as string[]).flatMap((s) => s.split(";")).map((s) => s.trim()).filter(Boolean).forEach((s) => attributions.add(s));
-    for (const [layer, map] of [["render", photo], ["cutout", cut], [PAINT_DIR, art]] as const) {
+    for (const [layer, map] of [["render", photo], [CUT_DIR, cut], [PAINT_DIR, art]] as const) {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
@@ -1454,16 +1458,17 @@ async function main() {
   }
   const heights = new Heights(areas.map((a) => join(DERIVED, a, "height")));
   if (REGIONS[activeRegion()].life?.foreground) {
-    paintedArt = art;
+    // painted tiles as the map shows them: a cutout (landmark) composed over the painting wins
+    paintedArt = new Map([...art, ...[...cut].filter(([k, f]) => f !== REMOTE && existsSync(f.replace(`/${CUT_DIR}/`, `/${PAINT_DIR}/`)))]);
     // the viewer draws vehicles over these art tiles in the painted style (traffic.ts paintedAt)
-    if (art.size) writeData("painted", JSON.stringify([...art.keys()].sort()));
+    if (paintedArt.size) writeData("painted", JSON.stringify([...paintedArt.keys()].sort()));
   }
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...mapOnly, ...photo, ...art, ...cut])); // painted wins; cutouts win over both: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);
-    if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo, "fg", FG_MIN_Z, art);
+    if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo, "fg", FG_MIN_Z, paintedArt.size ? paintedArt : art);
     if (mineLevels.length) await exportMine(mineLevels);
     if (REGIONS[activeRegion()].effects?.fly) await exportHeights(photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));

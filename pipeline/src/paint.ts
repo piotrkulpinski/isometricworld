@@ -282,6 +282,14 @@ const FACADES: Array<{ region: string; name: string; lat: number; lon: number; f
     facade: "a plain cube; all four facades are pale grey-white concrete with a strict grid of identical small square \
 glass-block windows, no balconies, no colour",
   },
+  {
+    // the scene gives it the glass "tower" facade (height ≥ 45 m): the painter copied the glass
+    region: "wieliczka", name: "Salesian church of St Stanislaus Kostka in Dębniki (1930s)", lat: 50.04968, lon: 19.92728,
+    facade: "it is a CHURCH, not an office tower, although image 1 draws its walls as blue glass (a data error): walls of \
+pale beige-grey plaster and light stone with tall narrow round-arched windows, no glass curtain wall, no window grid of an \
+office; the tall square bell tower in the same pale stone with louvred openings near the top and a green copper cap with a \
+cross; dark grey or green copper roofs",
+  },
 ];
 
 const CONTINUATION = `- The strip(s) along the {edges} edge(s) of image 1 are ALREADY-PAINTED neighbouring artwork. \
