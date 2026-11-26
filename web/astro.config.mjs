@@ -66,6 +66,11 @@ const cityRedirects = () => ({
 					if (from !== slug && /^[\w-]+$/.test(from)) lines.push(`/${from} /${slug} 301`);
 				}
 			}
+			// old city links (SITE_REDIRECTS, e.g. /wieliczka on a site that serves only Kraków), every spelling
+			for (const [from, to] of Object.entries(SITE.redirects)) {
+				const titleCase = from.replace(/(^|-)([a-z])/g, (_, s, c) => s + c.toUpperCase());
+				for (const f of new Set([from, titleCase, from.toUpperCase()])) lines.push(`/${f} /${to} 301`);
+			}
 			writeFileSync(new URL('_redirects', dir), lines.join('\n') + '\n');
 		},
 	},
