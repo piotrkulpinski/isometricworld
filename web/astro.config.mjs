@@ -15,7 +15,8 @@ if (existsSync(ENV)) process.loadEnvFile(ENV);
  * everything else is proxied from production (R2), same-origin, so any dev port works without CORS.
  * The built site loads R2 directly.
  */
-const CACHE = fileURLToPath(new URL('../data/web/', import.meta.url));
+// WEB_CACHE (as for the pipeline's export): serve another export cache, e.g. a preview built with export --paint-tag
+const CACHE = process.env.WEB_CACHE ? process.env.WEB_CACHE.replace(/\/*$/, '/') : fileURLToPath(new URL('../data/web/', import.meta.url));
 const TYPES = { avif: 'image/avif', webp: 'image/webp', json: 'application/json' };
 
 /** @returns {import('vite').Plugin} */

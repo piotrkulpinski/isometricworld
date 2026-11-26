@@ -7,6 +7,10 @@
  *   npm run export -- zagreb --partial              # from the renders/paintings on this machine only (a patch
  *                                                   # pulled from the archive, archive.ts); every other tile stays
  *                                                   # as published
+ *   WEB_CACHE=data/web-preview npm run export -- wieliczka --paint-tag krakow-pilot-2
+ *                                                   # a preview: the areas' paint-<tag>/ (paint.ts --tag) instead of
+ *                                                   # paint/, into a separate cache (copy data/web there first to
+ *                                                   # start from it); refuses the real cache
  *
  * All areas must belong to one region. Only files that differ from what is published (R2) are
  * written, into the local cache data/web/regions/<region>/ (served by `npm run dev` over production;
@@ -37,13 +41,13 @@ import { isCarFree, isOneway, isPedestrianised, roadLanes, roadWidth } from "./r
 import { styleOf } from "./styles.ts";
 import { createHash } from "node:crypto";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import sharp from "sharp";
 import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
 import { outlineEdgeDistance, outlinePixels } from "./outline.ts";
 import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuHeight, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
-import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
+import { DATA, DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
 import { FILTERS, localOsm } from "./osmlocal.ts";
@@ -155,6 +159,9 @@ let SCOPE: number[][] | null = null;
 const SCOPE_MARGIN = 1024 + 16;
 /** --partial: tiles whose source is not on this machine keep their published pixels (sources map to REMOTE) */
 const PARTIAL = process.argv.includes("--partial");
+/** --paint-tag <tag>: take each area's paint-<tag>/ (an experiment, paint.ts --tag) instead of paint/ */
+const PAINT_TAG = (() => { const i = process.argv.indexOf("--paint-tag"); return i > 0 ? process.argv[i + 1] : undefined; })();
+const PAINT_DIR = PAINT_TAG ? `paint-${PAINT_TAG}` : "paint";
 const REMOTE = "<published>";
 const hash = (b: Buffer | string) => createHash("sha1").update(b).digest("hex").slice(0, 10);
 const pendingFile = () => join(WEB_CACHE, `${activeRegion()}.state.json`);
@@ -329,7 +336,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
       continue;
     }
     // a cutout tile laid on a painted tile (cutout.ts) is painted too: it gets the bridge decks
-    const painted = layer === "map" && (file.includes("/paint/") || (file.includes("/cutout/") && existsSync(file.replace("/cutout/", "/paint/"))));
+    const painted = layer === "map" && (file.includes(`/${PAINT_DIR}/`) || (file.includes("/cutout/") && existsSync(file.replace("/cutout/", "/paint/"))));
     const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
       for (let i = 0; i < SPLIT; i++) {
@@ -1273,7 +1280,8 @@ async function exportPreviews() {
 let OUT = ""; // data/web/regions/<region>
 
 async function main() {
-  const names = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  const names = process.argv.slice(2).filter((a, i, all) => !a.startsWith("--") && all[i - 1] !== "--paint-tag");
+  if (PAINT_TAG && resolve(WEB_CACHE) === resolve(DATA, "web")) throw new Error("--paint-tag: set WEB_CACHE to a preview folder (e.g. data/web-preview), never the real cache");
   // region names expand to the areas its live map was built from, else all of its areas
   const asked: string[] = [];
   for (const n of names.length ? names : ["tlv-core"]) {
@@ -1317,7 +1325,7 @@ async function main() {
     const dir = join(DERIVED, a);
     const m = readJson(join(dir, "manifest.json"));
     (m.attributions as string[]).flatMap((s) => s.split(";")).map((s) => s.trim()).filter(Boolean).forEach((s) => attributions.add(s));
-    for (const [layer, map] of [["render", photo], ["cutout", cut], ["paint", art]] as const) {
+    for (const [layer, map] of [["render", photo], ["cutout", cut], [PAINT_DIR, art]] as const) {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
