@@ -1083,12 +1083,28 @@ async function assemble(all = false, only?: Set<string>) {
     return weightCache.get(key)!;
   };
 
-  /** window (i,j)'s fade towards neighbours skipped for good (SKIP): 1 inside, easing to 0 at a skipped side */
+  /**
+   * Painted share of each pixel of tile (tx,ty) near windows skipped for good (SKIP): a distance field to the nearest
+   * skipped window, eased over SKIP_FEATHER px, so the painting fades into the render with rounded corners and no
+   * window edges in it. Null when no skipped window is that close.
+   */
+  const SKIP_FEATHER = 192;
   const smooth = (t: number) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
-  const fadeOf = (i: number, j: number) => {
-    const l = SKIP.has(`${i - 1}_${j}`), r = SKIP.has(`${i + 1}_${j}`), u = SKIP.has(`${i}_${j - 1}`), d = SKIP.has(`${i}_${j + 1}`);
-    if (!(l || r || u || d)) return null;
-    return (x: number, y: number) => (l ? smooth(x / OVERLAP) : 1) * (r ? smooth((WIN - 1 - x) / OVERLAP) : 1) * (u ? smooth(y / OVERLAP) : 1) * (d ? smooth((WIN - 1 - y) / OVERLAP) : 1);
+  const skipFade = (tx: number, ty: number) => {
+    const x0 = tx * T - SKIP_FEATHER, y0 = ty * T - SKIP_FEATHER, x1 = (tx + 1) * T + SKIP_FEATHER, y1 = (ty + 1) * T + SKIP_FEATHER;
+    const rects: Array<[number, number, number, number]> = [];
+    for (let j = Math.floor((y0 - WIN) / STRIDE) + 1; j * STRIDE < y1; j++)
+      for (let i = Math.floor((x0 - WIN) / STRIDE) + 1; i * STRIDE < x1; i++)
+        if (SKIP.has(`${i}_${j}`)) rects.push([i * STRIDE, j * STRIDE, i * STRIDE + WIN, j * STRIDE + WIN]);
+    if (!rects.length) return null;
+    const f = new Float32Array(T * T);
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const gx = tx * T + x + 0.5, gy = ty * T + y + 0.5;
+      let d = Infinity;
+      for (const [a, b, c, e] of rects) d = Math.min(d, Math.hypot(Math.max(a - gx, 0, gx - c), Math.max(b - gy, 0, gy - e)));
+      f[y * T + x] = smooth(d / SKIP_FEATHER);
+    }
+    return f;
   };
 
   mkdirSync(join(base, `paint${SUFFIX}`), { recursive: true });
@@ -1125,10 +1141,10 @@ async function assemble(all = false, only?: Set<string>) {
       && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))
       && !(partial && existsSync(renderFile(tx, ty)) && mtime(renderFile(tx, ty)) > mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
-    // painted share per pixel where a window fades out towards a skipped neighbour (the render shows the rest)
-    const fade = have.some(([i, j]) => fadeOf(i, j)) ? new Float32Array(T * T) : null;
+    // painted share per pixel near windows skipped for good (the render shows the rest)
+    const fade = skipFade(tx, ty);
     for (const [i, j] of have) {
-      const px = await windowPixels(i, j), ww = await windowWeights(i, j), f = fadeOf(i, j);
+      const px = await windowPixels(i, j), ww = await windowWeights(i, j);
       const ox = i * STRIDE - tx * T, oy = j * STRIDE - ty * T;
       for (let y = Math.max(0, oy); y < Math.min(T, oy + WIN); y++)
         for (let x = Math.max(0, ox); x < Math.min(T, ox + WIN); x++) {
@@ -1139,12 +1155,11 @@ async function assemble(all = false, only?: Set<string>) {
           if (w <= 0) continue;
           acc[d * 3] += px[s] * w; acc[d * 3 + 1] += px[s + 1] * w; acc[d * 3 + 2] += px[s + 2] * w;
           wsum[d] += w;
-          if (fade) fade[d] = Math.max(fade[d], f ? f(wx, wy) : 1);
         }
     }
     const out = Buffer.alloc(T * T * 3);
     // seam cuts end hard at a patch edge: there the render only fills where no window paints
-    const render = partial && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
+    const render = (partial || fade) && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
     for (let d = 0; d < T * T; d++) {
       const w = wsum[d];
       for (let c = 0; c < 3; c++)
