@@ -67,7 +67,8 @@ its content hash. It reuses identical tiles from `data/web/` instead of download
 npm run mirror -- wieliczka --from https://tiles.isometriccity.com --reuse /Users/admin/Sites/isometricworld/data/web
 ```
 
-Done on 2026-11-26: see "What publish uploads" below. Run it again only to start over from isometriccity.com.
+Done on 2026-11-26: 73,640 files, 71,479 cloned from `data/web/`, 2,161 downloaded (42.2 MB), every one
+hash-checked. Run it again only to start over from isometriccity.com.
 
 ## Publish
 
@@ -78,7 +79,7 @@ R2_SECRET_ACCESS_KEY="$(op read "$TOKEN_REF" | tr -d '\n' | shasum -a 256 | cut 
 npm run publish -- wieliczka
 ```
 
-It prints the file count and size, asks `[y/N]`, uploads tiles and previews, then the data files, then
+It prints the file count and size (first publish: 73,616 tiles and previews + 25 data files, 2,057 MB), asks `[y/N]`, uploads tiles and previews, then the data files, then
 `state.json` and `world.json` last, checks `https://tiles.isometrickrakow.com/regions/wieliczka/data/world.json`,
 records the state in `WEB_STATE` and empties the cache.
 
@@ -97,7 +98,10 @@ serves the static pages and the `/p/*` analytics proxy. Analytics stay off until
 
 ## One-time Cloudflare setup
 
-Run once the zone is active. Each is idempotent or fails harmlessly when already done.
+Done on 2026-11-26 with the Workers deploy token: the custom domain `tiles.isometrickrakow.com` on the bucket
+and its CORS rule. Not done: the `www` record and redirect. That token has R2 and Workers access but no DNS or
+rulesets access on the zone (HTTP 403), so run the last two calls with a token that has Zone DNS Edit and
+Single Redirect Edit on `isometrickrakow.com`, or through Executor's Cloudflare account.
 
 ```sh
 CF=https://api.cloudflare.com/client/v4 A=f6459ac25378c8bf184c4104889d9272 Z=efef42db8d10b9207333e152b2606c1a
