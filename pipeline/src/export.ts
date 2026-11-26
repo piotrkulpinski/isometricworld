@@ -33,7 +33,8 @@
  *
  * Tile (x, y) at zoom z covers global art pixels [x·512·2^(8-z), …); z = 8 is 1:1.
  */
-import { isCarFree, isOneway, roadLanes, roadWidth } from "./roadspec.ts";
+import { isCarFree, isOneway, isPedestrianised, roadLanes, roadWidth } from "./roadspec.ts";
+import { styleOf } from "./styles.ts";
 import { createHash } from "node:crypto";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -832,6 +833,8 @@ async function exportRoads(areas: string[], heights: Heights) {
   const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
   let occluded = 0, total = 0, fallback = 0;
   const terrainU = terrainSampler(areas), ends = bridgeEndsOf(areas);
+  // preset carFreePaving: the streets the ground draws as pedestrian paving carry no simulated cars either
+  const region = REGIONS[activeRegion()], carFree = region.look === "styled" && styleOf(region.style).carFreePaving ? isPedestrianised : isCarFree;
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
@@ -846,7 +849,7 @@ async function exportRoads(areas: string[], heights: Heights) {
     for (const el of els) el.nodes.forEach((n: number, i: number) => use.set(n, (use.get(n) ?? 0) + (i === 0 || i === el.nodes.length - 1 ? 2 : 1)));
     for (const el of els) {
       const t = el.tags ?? {};
-      const cls = isCarFree(t) ? 6 : CLS[String(t.highway).replace("_link", "")] ?? 5;
+      const cls = carFree(t) ? 6 : CLS[String(t.highway).replace("_link", "")] ?? 5;
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
