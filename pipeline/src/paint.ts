@@ -26,7 +26,7 @@ import { groundPixel, seaH, readHeights } from "./heights.ts";
 import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
-import { auditContext, windowFlaws } from "./paintaudit.ts";
+import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
@@ -106,6 +106,11 @@ interface Local {
    * car-free streets), and the share of buildings painted brick or tile red where the render isn't red.
    */
   groundChecks?: { pedAsphalt: number; pedObjects: number; redWalls: number };
+  /**
+   * The render's cast-shadow colour (style preset castShadow): divided out of shadowed pedestrian ground in the
+   * painter's input, so a shadowed pedestrian street no longer looks like an asphalt road to the model.
+   */
+  liftShadows?: number[];
   /**
    * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
    * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
@@ -211,6 +216,7 @@ roofs stay grey, red tile stays red, green copper stays green.
 lime or yellow-green.
 `,
     groundChecks: { pedAsphalt: 120, pedObjects: 40, redWalls: 0.035 },
+    liftShadows: [0.60, 0.64, 0.80], // styles.ts poland castShadow
   },
 };
 
@@ -426,7 +432,9 @@ async function composeInput(i: number, j: number, file: string, heightFile: stri
   await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, (tx, ty) => heightTile(tx, ty, ground))).png().toFile(heightFile);
   // lift baked photogrammetry shadows so footprints and streets read clearly
   // (not in the simple look: the contrast lift turns photo grain into texture the model copies)
-  const crop = sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer()).removeAlpha();
+  let render = await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer();
+  if (local.liftShadows) render = await liftShadows(render, i, j, local.liftShadows);
+  const crop = sharp(render).removeAlpha();
   const lifted = await (SIMPLE ? crop : crop.clahe({ width: 128, height: 128, maxSlope: 2 }).modulate({ saturation: 1.1 })).png().toBuffer();
   let img = sharp(lifted);
   if (GUIDE) { // the guide's part of this window, upscaled to art px, over the render (outside the guide's box)
@@ -791,6 +799,20 @@ async function paintWindow(i: number, j: number) {
     rmSync(kept.file, { force: true });
     console.warn(`  ${i}_${j}: kept the least flawed attempt (${kept.note.trim()})`);
   }
+}
+
+/** Local.liftShadows: undo the render's cast shadow on pedestrian ground (bluish pixels of the paving). */
+async function liftShadows(png: Buffer, i: number, j: number, shade: number[]) {
+  const cls = await windowClasses(await groundContext(), i, j, false), N = WIN / 4;
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) {
+    if (cls[Math.floor(y / 4) * N + Math.floor(x / 4)] !== PED) continue;
+    const k = (y * WIN + x) * 3, blue = data[k + 2] - data[k];
+    if (blue <= 4) continue; // sunlit paving is warm (red ≥ blue)
+    const t = Math.min(1, (blue - 4) / 12); // soft shadow edges: partly
+    for (let c = 0; c < 3; c++) data[k + c] = Math.min(255, Math.round(data[k + c] / (1 - t * (1 - shade[c]))));
+  }
+  return sharp(data, { raw: info }).png().toBuffer();
 }
 
 /** Ground classes of the area for groundChecks (built once, on the first window that needs them). */

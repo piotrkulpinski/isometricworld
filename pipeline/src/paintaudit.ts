@@ -26,7 +26,7 @@ import { readHeights } from "./heights.ts";
 
 const WIN = 1024, STRIDE = 896, CELL = 4, N = WIN / CELL, T = CAMERA.tile;
 /** Ground classes of the top-down raster. */
-const PED = 1, ROAD = 2, GRASS = 3, PATH = 4;
+export const PED = 1, ROAD = 2, GRASS = 3, PATH = 4;
 const CLASS_OF: Record<string, number> = {
   plaza: PED, paving: PED, stalls: PED,
   street: ROAD, lane: ROAD, highway: ROAD, parking: ROAD, dirtroad: ROAD,
@@ -163,7 +163,7 @@ async function crop(ctx: Ctx, kind: "render" | "height", X: number, Y: number) {
 }
 
 /** Per-cell classes of a window: ground class where the ground is visible, -1 = building or tree, 0 = unknown. */
-export async function windowClasses(ctx: Ctx, i: number, j: number) {
+export async function windowClasses(ctx: Ctx, i: number, j: number, erode = true) {
   const X = i * STRIDE, Y = j * STRIDE, hc = new Float32Array(N * N).fill(NaN);
   for (const { f, tx, ty } of (await crop(ctx, "height", X, Y)) as Array<{ f: string; tx: number; ty: number }>) {
     const h = await readHeights(f);
@@ -183,6 +183,7 @@ export async function windowClasses(ctx: Ctx, i: number, j: number) {
     [e, n] = pixelToEn(px, py, u);
     cls[k] = u - ctx.terrain(e, n) > 1.2 ? -1 : ctx.classAt(e, n);
   }
+  if (!erode) return cls;
   // keep pedestrian and road cells away from their edges (kerbs, misregistration): 1 cell in (Old Town streets show
   // only ~6 cells between facades)
   const out = Int8Array.from(cls);
