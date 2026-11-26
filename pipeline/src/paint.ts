@@ -26,6 +26,7 @@ import { groundPixel, seaH, readHeights } from "./heights.ts";
 import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
+import { lowDisk } from "./diskguard.ts";
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
@@ -1134,9 +1135,19 @@ async function assemble(all = false, only?: Set<string>) {
   console.log(`  assembled ${written} art tiles`);
 }
 
+/** Set when free disk space ran out: no new window starts, the run ends after the ones in flight (exit code 3). */
+let diskStop: string | null = null;
+const diskOk = () => !(diskStop ??= lowDisk());
+function exitOnDisk() {
+  if (!diskStop) return;
+  console.error(`  STOPPED: ${diskStop}. Windows in flight finished; free space and run again to resume.`);
+  process.exit(3);
+}
+
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   const q = [...items];
-  await Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()!); }));
+  await Promise.all(Array.from({ length: n }, async () => { while (q.length && diskOk()) await fn(q.shift()!); }));
+  exitOnDisk();
 }
 
 async function main() {
@@ -1264,6 +1275,7 @@ async function main() {
   await new Promise<void>((resolve, reject) => {
     let running = 0;
     const next = () => {
+      if (!diskOk()) { if (!running) resolve(); return; } // finish what is in flight, start nothing new
       for (const w of order) {
         if (running >= J) break;
         const k = `${w[0]}_${w[1]}`;
@@ -1277,13 +1289,14 @@ async function main() {
           const open = order.find(([a, b]) => !done.has(`${a}_${b}`));
           const ringDone = open ? Math.floor(rank.get(`${open[0]}_${open[1]}`)! / 2) - 1 : maxR;
           if (ringDone > lastRing) { lastRing = ringDone; assembleSoon(); }
-          if (done.size === order.length) resolve(); else next();
+          if (done.size === order.length || (diskStop && !running)) resolve(); else next();
         }, reject);
       }
     };
     if (!order.length) resolve(); else next();
   });
   await assembling;
+  exitOnDisk();
   // then the tiles are rebuilt with the harmonised sea: all of them after a full run; after a partial one
   // (--window, --near, --parts) only those under its windows, with the saved sea colour, so nothing else changes
   const partial = !!(args.window || args.near || args.parts);
