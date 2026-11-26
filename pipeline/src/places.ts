@@ -13,6 +13,13 @@ import type { StyleName } from "./styles.ts";
 
 export interface Region {
   title: string;
+  /**
+   * A region drawn on another region's grid (`gridOf`: same origin, heading and heights, so that region's areas,
+   * renders and paintings serve it unchanged). REGION=<this id> on any CLI gives it the grid region's areas whose
+   * names match the regex `areas` (areas.ts): Kraków's city map out of the Wieliczka region's Kraków areas.
+   */
+  gridOf?: string;
+  areas?: string;
   /** ENU origin. Fixed forever once tiles exist: changing it moves every tile of the region. */
   origin: { lat: number; lon: number; h: number };
   /** Compass bearing the camera looks toward (pick it diagonal to the main street grid). */
@@ -369,12 +376,31 @@ export const REGIONS: Record<string, Region> = {
   },
 };
 
+/**
+ * Kraków alone (isometrickrakow.com): the city of Kraków (gmina Kraków, OSM relation 449696, admin_level 8) on the
+ * Wieliczka region's grid, without the town of Wieliczka and its salt mine. Run a CLI with REGION=krakow.
+ */
+REGIONS.krakow = {
+  ...REGIONS.wieliczka,
+  title: "Kraków",
+  gridOf: "wieliczka",
+  areas: "^krakow-",
+  municipalities: ["Kraków"],
+  credits: REGIONS.wieliczka.credits.slice(0, 2),
+  life: {
+    ...REGIONS.wieliczka.life,
+    coaches: undefined, // the salt mine's coach parks
+    pigeons: REGIONS.wieliczka.life!.pigeons!.filter((p) => p.name.startsWith("Rynek Główny")),
+  },
+  outline: { relations: [449696] },
+};
+
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
   stuttgart: { title: "Stuttgart", region: "stuttgart", center: [48.7784, 9.18], widthM: 3000 },
   zagreb: { title: "Zagreb", region: "zagreb", center: [45.8131, 15.9772], widthM: 3000 },
   wieliczka: { title: "Wieliczka", region: "wieliczka", center: [49.9825, 20.0585], widthM: 2000 },
-  krakow: { title: "Kraków", region: "wieliczka", center: [50.0585, 19.9365], widthM: 1600 },
+  krakow: { title: "Kraków", region: "krakow", center: [50.0585, 19.9365], widthM: 1600 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";
