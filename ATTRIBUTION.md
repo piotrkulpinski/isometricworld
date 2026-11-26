@@ -107,8 +107,10 @@ train AI models. No credit to OpenAI or Google is required.
 
 Everything in `pipeline/style/` was painted the same way for this project: `reference.png` (the house style,
 a stretch of the painted Tel Aviv map: Gordon beach and the city behind it), `trees.png` (tree species
-sheet), `trees-stuttgart.png` (Stuttgart tree species sheet, derived from `trees.png` with Codex/ChatGPT)
-and `sea.png` (sea texture).
+sheet), `trees-stuttgart.png` (Stuttgart tree species sheet, derived from `trees.png` with Codex/ChatGPT),
+`trees-poland.png` (Kraków tree species sheet, derived from `trees-stuttgart.png` and `trees.png` with Codex/ChatGPT),
+`reference-poland.png` (Kraków's second style reference: our own styled render of Stradom and Kazimierz, repainted
+with Codex/ChatGPT in the style of `reference.png`; no photos used) and `sea.png` (sea texture).
 
 ## Software
 

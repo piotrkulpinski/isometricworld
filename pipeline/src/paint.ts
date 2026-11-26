@@ -167,10 +167,12 @@ and tram tracks empty.`,
     render: `The layout and every roof shape are exact (real \
 pitched, hipped and flat roofs from Poland's national 3D building models) and the roof colours come from the aerial \
 photo; the walls' colours and window patterns are stylised hints (grey = asphalt with lane markings, pale = pavement/plaza, \
-green = grass/park, beige-yellow = fields, blue = water, brown lines = rail and tram tracks). Tree crowns are rounded \
-deciduous crowns and dark narrow cones (spruce, pine), as in image 4.`,
+green = grass/park, beige-yellow = fields, blue = water, brown lines = rail and tram tracks). Tree crowns show the \
+species of image 4 by shape: rounded crowns in several greens = lime, maple, oak, horse chestnut, ash; narrow airy \
+pale crowns on white trunks = birch; small round crowns = fruit trees; tall narrow columns = poplar; broad drooping \
+pale crowns = willow; dark tiered cones = spruce; a high flat crown on a bare trunk = pine; short dark columns = thuja.`,
     treesOf: "Kraków",
-    treeHint: " (broad rounded deciduous crowns in early-summer green, spruces and pines as narrow dark cones)",
+    treeHint: " (broad rounded deciduous crowns in early-summer green, spruces as dark cones, pines with high flat crowns)",
     materials: `Draw believable Kraków \
 and Lesser Poland materials: historic tenement houses (kamienice) in cream, ochre, salmon, pale yellow and grey plaster with \
 cornices, tall windows and red clay-tile roofs with dormers around courtyards; older districts mixing exposed red brick and \
@@ -182,7 +184,8 @@ pitched roofs. Keep every building's colour and roof from image 1, and draw a ch
 shows one. Woods, parks, fields and water stay exactly that: never add buildings, streets or squares where image 1 shows \
 trees, grass or water. Tall towers stay tall. Draw no trains, trams or buses anywhere (they are animated on top of the \
 map): leave rail and tram tracks empty.`,
-    trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+    trees: join(PIPELINE, "style", "trees-poland.png"),
+    styleLocal: join(PIPELINE, "style", "reference-poland.png"),
   },
 };
 
