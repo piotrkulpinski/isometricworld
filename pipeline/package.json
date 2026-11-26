@@ -16,7 +16,8 @@
     "publish": "tsx src/publish.ts",
     "archive": "tsx src/archive.ts",
     "pull": "tsx src/archive.ts pull",
-    "og": "tsx src/og.ts"
+    "og": "tsx src/og.ts",
+    "mirror": "tsx src/mirror.ts"
   },
   "dependencies": {
     "playwright-core": "^1.65.0",

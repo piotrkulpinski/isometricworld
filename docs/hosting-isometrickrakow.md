@@ -1,0 +1,134 @@
+# Hosting Isometric Kraków
+
+Isometric Kraków (https://isometrickrakow.com) is the `wieliczka` region (Kraków and Maciek Chmura's Wieliczka),
+served from Piotr Kulpiński's own Cloudflare account. It is built on Isometric World by Dmytro Krasun
+(https://isometriccity.com, https://github.com/krasun/isometricworld). The code is the same: every difference
+is a setting in `.env` (`pipeline/src/site.ts`, `.env.example`).
+
+| | |
+|---|---|
+| Cloudflare account | `f6459ac25378c8bf184c4104889d9272` |
+| Zone | `isometrickrakow.com`, id `efef42db8d10b9207333e152b2606c1a` |
+| Site | Worker `isometrickrakow`, custom domain `isometrickrakow.com`; `www` redirects to it |
+| Tiles | R2 bucket `isometrickrakow-tiles`, public at `https://tiles.isometrickrakow.com` |
+| Archive | R2 bucket `isometrickrakow-archive` (`ARCHIVE_BUCKET`) |
+| Export cache | `~/Sites/isometricworld/data/web-isometrickrakow/` (`WEB_CACHE`) |
+| Published state | `~/Sites/isometricworld/data/web-state-isometrickrakow/` (`WEB_STATE`) |
+
+The cache and the state have folders of their own, so this bucket never mixes with `data/web/` and
+`data/web-state/`, which track what is published on isometriccity.com.
+
+## `.env`
+
+In the checkout you publish and deploy from (no secrets in it):
+
+```sh
+TILES_ORIGIN=https://tiles.isometrickrakow.com
+TILES_BUCKET=isometrickrakow-tiles
+CLOUDFLARE_ACCOUNT_ID=f6459ac25378c8bf184c4104889d9272
+SITE_DOMAIN=isometrickrakow.com
+WORKER_NAME=isometrickrakow
+SITE_NAME=Isometric Kraków
+SITE_HOME=krakow
+SITE_REGIONS=wieliczka
+SITE_DESCRIPTION=Kraków and Wieliczka as an isometric map, drawn from open data and painted with AI.
+SITE_MAKERS=Made by [Piotr Kulpiński](https://kulpinski.dev) · Wieliczka by [Maciek Chmura](https://maciek.cloud/)
+SITE_SOURCE=https://github.com/piotrkulpinski/isometricworld
+SITE_ICONS=/sites/isometric-krakow
+WEB_CACHE=/Users/admin/Sites/isometricworld/data/web-isometrickrakow
+WEB_STATE=/Users/admin/Sites/isometricworld/data/web-state-isometrickrakow
+```
+
+With these, `/` opens Kraków's map, `/krakow` and `/wieliczka` work, no other city is built, and the map footer
+reads "Made by Piotr Kulpiński · Wieliczka by Maciek Chmura · Built on Isometric World by Dmytro Krasun (GitHub)"
+after the data credits and "Painted with AI".
+
+## Credentials
+
+Never written to disk. Each command reads the Cloudflare token from 1Password inline:
+
+```sh
+export OP_SERVICE_ACCOUNT_TOKEN="$(cat ~/.config/op/agent-token)"   # if the shell has not loaded ~/.zshenv
+TOKEN_REF='op://Agents/5larchv3bkb57bvk3syvrbjuky/credential'      # Cloudflare API Token (Workers deploy)
+```
+
+Publish is fastest through R2's S3 API (16 uploads at a time instead of ~4 files/s). An account API token with
+R2 permissions doubles as an S3 key pair: the access key ID is the token's ID, the secret is the SHA-256 of the
+token. If the token has no R2 permission, publish with `CLOUDFLARE_API_TOKEN` instead (same command without the
+two R2 variables, about 5 hours for the first full upload).
+
+## First publish: seed the bucket
+
+An empty bucket needs the whole region, not only an export's changes. `npm run mirror` copies the region as
+published on isometriccity.com (Dmytro knows and agreed) into this site's cache, checking every file against
+its content hash. It reuses identical tiles from `data/web/` instead of downloading them.
+
+```sh
+npm run mirror -- wieliczka --from https://tiles.isometriccity.com --reuse /Users/admin/Sites/isometricworld/data/web
+```
+
+Done on 2026-11-26: see "What publish uploads" below. Run it again only to start over from isometriccity.com.
+
+## Publish
+
+```sh
+R2_ACCESS_KEY_ID="$(curl -s -H "Authorization: Bearer $(op read "$TOKEN_REF")" \
+    https://api.cloudflare.com/client/v4/accounts/f6459ac25378c8bf184c4104889d9272/tokens/verify | jq -r .result.id)" \
+R2_SECRET_ACCESS_KEY="$(op read "$TOKEN_REF" | tr -d '\n' | shasum -a 256 | cut -d' ' -f1)" \
+npm run publish -- wieliczka
+```
+
+It prints the file count and size, asks `[y/N]`, uploads tiles and previews, then the data files, then
+`state.json` and `world.json` last, checks `https://tiles.isometrickrakow.com/regions/wieliczka/data/world.json`,
+records the state in `WEB_STATE` and empties the cache.
+
+## Deploy
+
+After every publish (pages bake in the published `world.json`):
+
+```sh
+CLOUDFLARE_API_TOKEN="$(op read "$TOKEN_REF")" npm run deploy
+```
+
+This builds `web/dist` and runs `wrangler deploy --domain isometrickrakow.com --name isometrickrakow` in account
+`CLOUDFLARE_ACCOUNT_ID`. Wrangler creates the Worker, attaches the custom domain and its DNS record. The Worker
+serves the static pages and the `/p/*` analytics proxy. Analytics stay off until a Pirsch key is set:
+`CLOUDFLARE_API_TOKEN="$(op read "$TOKEN_REF")" npx wrangler secret put PIRSCH_ACCESS_KEY --name isometrickrakow`.
+
+## One-time Cloudflare setup
+
+Run once the zone is active. Each is idempotent or fails harmlessly when already done.
+
+```sh
+CF=https://api.cloudflare.com/client/v4 A=f6459ac25378c8bf184c4104889d9272 Z=efef42db8d10b9207333e152b2606c1a
+H="Authorization: Bearer $(op read "$TOKEN_REF")"
+
+# tiles.isometrickrakow.com → the bucket (creates its DNS record)
+curl -s -X POST "$CF/accounts/$A/r2/buckets/isometrickrakow-tiles/domains/custom" -H "$H" -H 'Content-Type: application/json' \
+  -d "{\"domain\":\"tiles.isometrickrakow.com\",\"zoneId\":\"$Z\",\"enabled\":true,\"minTLS\":\"1.2\"}"
+
+# CORS as on isometriccity.com: any origin may read (the pages fetch JSON with crossorigin; the dev server and
+# local previews read it too)
+curl -s -X PUT "$CF/accounts/$A/r2/buckets/isometrickrakow-tiles/cors" -H "$H" -H 'Content-Type: application/json' \
+  -d '{"rules":[{"allowed":{"origins":["*"],"methods":["GET","HEAD"]},"exposeHeaders":["ETag"],"maxAgeSeconds":86400}]}'
+
+# www.isometrickrakow.com: a proxied placeholder record and a 301 to the apex, path and query kept
+curl -s -X POST "$CF/zones/$Z/dns_records" -H "$H" -H 'Content-Type: application/json' \
+  -d '{"type":"AAAA","name":"www","content":"100::","proxied":true,"comment":"redirects to isometrickrakow.com"}'
+curl -s -X PUT "$CF/zones/$Z/rulesets/phases/http_request_dynamic_redirect/entrypoint" -H "$H" -H 'Content-Type: application/json' \
+  -d '{"rules":[{"expression":"(http.host eq \"www.isometrickrakow.com\")","action":"redirect","description":"www to apex","action_parameters":{"from_value":{"status_code":301,"target_url":{"expression":"concat(\"https://isometrickrakow.com\", http.request.uri.path)"},"preserve_query_string":true}}}]}'
+```
+
+The ruleset `PUT` replaces the zone's dynamic redirect rules, which is fine on a new zone. Check:
+
+```sh
+curl -sI https://tiles.isometrickrakow.com/regions/wieliczka/data/world.json -H 'Origin: https://isometrickrakow.com' | grep -i 'http/\|access-control'
+curl -sI https://www.isometrickrakow.com/krakow?at=50.06,19.94,1 | grep -i 'http/\|location'
+```
+
+## Later updates
+
+The paint run exports into the same cache: with this `.env`, `npm run export -- wieliczka` (or `--partial`)
+starts from this bucket's state, writes only changed tiles, and `npm run publish -- wieliczka` uploads them.
+Then deploy. Social cards: `npm run og -- index krakow wieliczka` writes `web/public/og/isometric-krakow.jpg`
+(the card of `/`) and the city cards; commit them.

@@ -4,20 +4,18 @@
  * (/Tel-Aviv-Yafo) or spaces/underscores are sent to the right city. Static hosts serve this page
  * for any missing path, so the redirect works without server rules.
  */
-import { CITIES } from "../../../pipeline/src/places.ts";
-const slugs = Object.keys(CITIES);
+import { siteCities, siteConfig } from "../../../pipeline/src/site.ts";
+import Icons from "../components/Icons.astro";
+const site = siteConfig(), slugs = siteCities(site);
 ---
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<link rel="icon" href="/favicon.ico" sizes="48x48" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-		<link rel="manifest" href="/site.webmanifest" />
+		<Icons />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="theme-color" content="#0e0f12" />
 		<meta name="color-scheme" content="dark" />
-		<title>Not found · Isometric World</title>
+		<title>Not found · {site.name}</title>
 		<script is:inline define:vars={{ slugs }}>
 			const want = decodeURIComponent(location.pathname).replace(/^\/+|\/+$/g, "").toLowerCase().replace(/[\s_]+/g, "-");
 			if (slugs.includes(want)) location.replace(`/${want}${location.search}${location.hash}`);

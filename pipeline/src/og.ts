@@ -4,6 +4,9 @@
  *
  *   npx tsx src/og.ts [index] [city ...]   # default: all → web/public/og/index.jpg and og/<city>.jpg
  *
+ * A site with its own name (SITE_NAME, site.ts) gets og/<its slug>.jpg for `/` instead of index.jpg, from its
+ * home city (SITE_HOME), and "all" means the cities it serves.
+ *
  * The image shows the map, so the source credits (© OpenStreetMap contributors, Copernicus) are drawn
  * on it, as on the map.
  */
@@ -14,6 +17,7 @@ import { CAMERA, llhToPixel, useRegion } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { ROOT, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, DEFAULT_CITY, REGIONS } from "./places.ts";
+import { siteCities, siteConfig } from "./site.ts";
 
 const W = 1200, H = 630;
 const TS = 512, NATIVE_Z = 8, FORMAT = "avif"; // as export.ts
@@ -93,6 +97,7 @@ async function og(slug: string, heading: string, name: string) {
 }
 
 const names = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-// the home page (/) opens the default city: same view, the site name as the heading
-if (!names.length || names.includes("index")) await og(DEFAULT_CITY, "Isometric World", "index");
-for (const slug of names.length ? names.filter((n) => n !== "index") : Object.keys(CITIES)) await og(slug, CITIES[slug]?.title ?? slug, slug);
+// the home page (/) opens the default city (or the site's home city): same view, the site name as the heading
+const site = siteConfig();
+if (!names.length || names.includes("index")) await og(site.home || DEFAULT_CITY, site.name, site.homeOg);
+for (const slug of names.length ? names.filter((n) => n !== "index") : siteCities(site)) await og(slug, CITIES[slug]?.title ?? slug, slug);

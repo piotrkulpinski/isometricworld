@@ -1,0 +1,197 @@
+---
+/** The city picker at / (when SITE_HOME is unset): every city as a card (its opening view, its makers and its data sources), A to Z, with a search; a card opens /<city-slug>. */
+import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { HOSTING } from "../../../pipeline/src/hosting.ts";
+import { siteCities, siteConfig } from "../../../pipeline/src/site.ts";
+import Icons from "./Icons.astro";
+const site = siteConfig(), served = siteCities(site);
+declare const __WEB_CACHE__: string;
+interface Preview { file: string; lqip: string }
+interface World { previews?: Record<string, { land: Preview; port: Preview }> }
+
+const tilesOrigin = import.meta.env.DEV ? "" : HOSTING.origin;
+async function loadWorld(region: string): Promise<World> {
+  const local = `${__WEB_CACHE__}regions/${region}/data/world.json`;
+  if (import.meta.env.DEV && existsSync(local)) return JSON.parse(readFileSync(local, "utf8"));
+  try {
+    const r = await fetch(`${HOSTING.origin}/regions/${region}/data/world.json?build=${Date.now()}`);
+    return r.ok ? await r.json() : {};
+  } catch { return {}; }
+}
+
+// PROTOTYPE: makers and source links per region, as in the map footer (web/src/scripts/map.ts)
+type Link = { text: string; href?: string };
+const PEOPLE: Record<string, Link[]> = {
+  "israel-center": [{ text: "Dmytro Krasun", href: "https://dmytrokrasun.com" }],
+  stuttgart: [{ text: "Lukas Hermann", href: "https://lukashermann.dev/" }],
+  zagreb: [{ text: "Andrej Šimunaj", href: "https://zeropointstudio.io" }],
+  wieliczka: [{ text: "Maciek Chmura", href: "https://maciek.cloud/" }],
+};
+/** cities made by someone other than their region's maker (Kraków lies in the Wieliczka region) */
+const CITY_PEOPLE: Record<string, Link[]> = {
+  krakow: [{ text: "Piotr Kulpiński", href: "https://kulpinski.dev" }],
+};
+const OSM: Link = { text: "© OpenStreetMap contributors", href: "https://www.openstreetmap.org/copyright" };
+const DEM: Link = { text: "Copernicus DEM © DLR, Airbus DS" };
+// GUGiK (PZGiK material, CC BY 4.0) requires its notice wherever the map is published
+const GUGIK: Link = { text: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, CC BY 4.0)", href: "https://www.geoportal.gov.pl/" };
+const SOURCES: Record<string, Link[]> = {
+  "israel-center": [OSM, { text: "Tel Aviv-Yafo Municipality", href: "https://opendatasource.tel-aviv.gov.il/" }, DEM],
+  stuttgart: [OSM, { text: "LGL Baden-Württemberg, dl-de/by-2-0 (verändert)", href: "https://www.lgl-bw.de" }, DEM],
+  zagreb: [OSM, { text: "Grad Zagreb, ZG3D 2022 (7. 5. 2025., Otvorena dozvola, izmijenjeno)", href: "https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz" }, DEM],
+  wieliczka: [OSM, GUGIK, DEM,
+    { text: "Salt mine: plan by W. Hondius, 1645 (public domain)", href: "https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg" }],
+};
+/** cities whose card lists other sources than their region's (Kraków's view has no salt mine) */
+const CITY_SOURCES: Record<string, Link[]> = { krakow: [OSM, GUGIK, DEM] };
+const PAINTED: Record<string, boolean> = { "israel-center": true, stuttgart: false, zagreb: true, wieliczka: false };
+
+const worlds = Object.fromEntries(await Promise.all(
+  [...new Set(served.map((s) => CITIES[s].region))].map(async (r) => [r, await loadWorld(r)] as const)));
+/** cities built with this project and hosted by their makers: the card opens their site in a new tab */
+const EXTERNAL = [
+  { slug: "bratislava", title: "Bratislava", country: "Slovakia", href: "https://bratislava.jantursky.com/",
+    image: "/og/bratislava.jpg", lqip: undefined, people: [{ text: "Ján Turský", href: "https://jantursky.com/" }] as Link[], sources: [OSM, DEM], painted: false },
+];
+const cards = [...served.map((slug) => [slug, CITIES[slug]] as const).map(([slug, c]) => {
+  const region = REGIONS[c.region], pv = worlds[c.region]?.previews?.[slug]?.land;
+  return {
+    slug, title: c.title, country: region.country, href: `/${slug}`,
+    image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
+    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
+  };
+}), ...(site.regions.length ? [] : EXTERNAL).map((c) => ({ ...c, external: true }))] as { href: string; external?: boolean; slug: string; title: string; country: string;
+  image: string; lqip?: string; people: Link[]; sources: Link[]; painted: boolean }[];
+const host = (href: string) => new URL(href).host;
+
+// A to Z by city name; the search matches the name, the country and the makers, accents ignored
+const fold = (t: string) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+const sorted = [...cards].sort((a, b) => a.title.localeCompare(b.title, "en"));
+const ogImage = new URL(`/og/${site.homeOg}.jpg`, Astro.site ?? Astro.url).href;
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<Icons />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="theme-color" content="#0e0f12" />
+		<meta name="color-scheme" content="dark" />
+		<title>{site.name}</title>
+		<meta name="description" content={site.description} />
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content={site.name} />
+		<meta property="og:title" content={site.name} />
+		<meta property="og:description" content={site.description} />
+		<meta property="og:image" content={ogImage} />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta name="twitter:card" content="summary_large_image" />
+		{!import.meta.env.DEV && <script is:inline defer src="/p/s.js" id="pianjs" data-hit-endpoint="/p/v" data-event-endpoint="/p/e" data-session-endpoint="/p/k"></script>}
+	</head>
+	<body>
+		<header>
+			<h1>{site.name}</h1>
+			<p>Cities painted from open data. Pick one and scroll around.</p>
+		</header>
+		<div class="search">
+			<input id="q" type="search" placeholder="Search cities" aria-label="Search cities" autocomplete="off" spellcheck="false" />
+		</div>
+		<main id="cards">
+			{sorted.map((c) => (
+				<article class="card" data-q={fold([c.title, c.slug, c.country, ...c.people.map((p) => p.text)].join(" "))}>
+					<a class="cover" href={c.href} aria-label={c.external ? `Open ${c.title} on ${host(c.href)} (new tab)` : `Open ${c.title}`}
+						{...(c.external ? { target: "_blank", rel: "noopener" } : {})}>
+						<div class={c.lqip ? "img" : "img og"} style={c.lqip ? `background-image: url(${c.lqip})` : undefined}>
+							<img src={c.image} alt={`${c.title}, isometric city map`} loading="lazy" decoding="async" />
+							{c.external && <span class="badge">External site ↗</span>}
+						</div>
+					</a>
+					<div class="body">
+						<h2><a href={c.href} {...(c.external ? { target: "_blank", rel: "noopener" } : {})}>{c.title}{c.external && <span class="ext" aria-hidden="true"> ↗</span>}</a></h2>
+						<p class="country">{c.country}</p>
+						{c.external && <p class="site">On <a href={c.href} target="_blank" rel="noopener">{host(c.href)}</a>, a separate site built with this project</p>}
+						{c.people.length > 0 && (
+							<p class="made">Made by {c.people.map((p, i) => <>{i > 0 && (i === c.people.length - 1 ? " with " : ", ")}{p.href ? <a href={p.href}>{p.text}</a> : p.text}</>)}</p>
+						)}
+						<ul class="sources">
+							{c.sources.map((s) => <li>{s.href ? <a href={s.href}>{s.text}</a> : s.text}</li>)}
+							{c.painted && <li>Painted with AI</li>}
+						</ul>
+					</div>
+				</article>
+			))}
+			<p class="none" id="none" hidden>No city matches.</p>
+		</main>
+		<footer>
+			<a href={site.source}>Source</a> · Data credits on each card and on every map
+		</footer>
+
+		<script is:inline>
+			(() => {
+				const q = document.getElementById("q"), none = document.getElementById("none"), cards = [...document.querySelectorAll(".card")];
+				const fold = (t) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase().trim();
+				const apply = () => {
+					const words = fold(q.value).split(/\s+/).filter(Boolean);
+					let shown = 0;
+					for (const c of cards) { const hit = words.every((w) => c.dataset.q.includes(w)); c.hidden = !hit; shown += hit; }
+					none.hidden = shown > 0;
+				};
+				q.addEventListener("input", apply);
+				q.addEventListener("keydown", (e) => {
+					if (e.key === "Escape") { q.value = ""; apply(); }
+					if (e.key === "Enter") { const first = cards.find((c) => !c.hidden); first?.querySelector("a.cover")?.click(); }
+				});
+				document.addEventListener("keydown", (e) => {
+					if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+				});
+				apply();
+			})();
+		</script>
+
+		<style is:global>
+			:root { --bg: #0e0f12; --card: #17191e; --line: #262932; --text: #e6e6e6; --muted: #9aa0aa; --link: #8ab4ff; }
+			html, body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif;
+				-webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+			a { color: var(--link); text-decoration: none; }
+			a:hover { text-decoration: underline; }
+			header, main, footer { max-width: 1160px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+			header { padding-top: 48px; padding-bottom: 24px; }
+			h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); letter-spacing: -0.02em; }
+			header p { margin: 8px 0 0; color: var(--muted); font-size: 16px; }
+			.search { max-width: 1160px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left)); }
+			.search input { width: 100%; max-width: 360px; box-sizing: border-box; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
+				background: var(--card); color: var(--text); font: inherit; font-size: 16px; outline: none; }
+			.search input::placeholder { color: var(--muted); }
+			.search input:focus { border-color: #3a3f4b; }
+			main { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding-bottom: 32px; }
+			.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column;
+				transition: transform 0.18s ease, border-color 0.18s ease; }
+			.card[hidden] { display: none; }
+			.none { color: var(--muted); margin: 0; }
+			.card:hover { transform: translateY(-2px); border-color: #3a3f4b; }
+			.cover { display: block; }
+			.img { aspect-ratio: 5 / 4; background: #1b1d22 center / cover; overflow: hidden; }
+			.img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.4s ease; }
+			.card:hover .img img { transform: scale(1.04); }
+			/* no published preview yet: the social card, cropped past its baked-in title and credits */
+			.img.og img { object-position: 100% 50%; transform: scale(1.45); transform-origin: 75% 45%; }
+			.card:hover .img.og img { transform: scale(1.5); }
+			.img { position: relative; }
+			.badge { position: absolute; top: 10px; right: 10px; padding: 4px 9px; border-radius: 999px; background: rgba(14, 15, 18, 0.82);
+				border: 1px solid rgba(255, 255, 255, 0.18); color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+			.ext { color: var(--muted); font-weight: 400; }
+			.site { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+			.body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+			h2 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+			h2 a { color: var(--text); }
+			.country { margin: 0; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+			.made { margin: 6px 0 0; font-size: 14px; }
+			.sources { list-style: none; margin: 8px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; color: var(--muted); }
+			.sources a { color: var(--muted); text-decoration: underline; text-decoration-color: #4a4f5a; }
+			footer { padding-top: 8px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); color: var(--muted); font-size: 13px; }
+			@media (prefers-reduced-motion: reduce) { .card, .img img { transition: none; } }
+		</style>
+	</body>
+</html>

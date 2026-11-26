@@ -4,10 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import { HOSTING } from '../pipeline/src/hosting.ts';
 import { CITIES } from '../pipeline/src/places.ts';
+import { siteCities, siteConfig } from '../pipeline/src/site.ts';
 
 // hosting settings (TILES_ORIGIN, SITE_DOMAIN) live in the repo-root .env, never in git
 const ENV = fileURLToPath(new URL('../.env', import.meta.url));
 if (existsSync(ENV)) process.loadEnvFile(ENV);
+// what this site is (name, home city, regions, makers): pipeline/src/site.ts, from SITE_* in .env
+const SITE = siteConfig();
 
 /**
  * Map data is not in web/public. In dev, /regions/* is served from the export cache
@@ -55,7 +58,8 @@ const cityRedirects = () => ({
 	hooks: {
 		'astro:build:done': ({ dir }) => {
 			const lines = [];
-			for (const [slug, city] of Object.entries(CITIES)) {
+			for (const slug of siteCities(SITE)) {
+				const city = CITIES[slug];
 				const titleCase = slug.replace(/(^|-)([a-z])/g, (_, s, c) => s + c.toUpperCase());
 				const fromTitle = city.title.trim().replace(/\s+/g, '-');
 				for (const from of new Set([titleCase, fromTitle, slug.toUpperCase()])) {
@@ -90,7 +94,7 @@ export default defineConfig({
 	site: process.env.SITE_DOMAIN ? `https://${process.env.SITE_DOMAIN}` : undefined,
 	vite: {
 		// the browser has no process.env: bake the tile origin into the viewer
-		define: { __TILES_ORIGIN__: JSON.stringify(HOSTING.origin), __WEB_CACHE__: JSON.stringify(CACHE) },
+		define: { __TILES_ORIGIN__: JSON.stringify(HOSTING.origin), __WEB_CACHE__: JSON.stringify(CACHE), __SITE__: JSON.stringify(SITE) },
 		// pre-bundle the viewer so the dev server never serves a stale dependency
 		optimizeDeps: { include: ['openseadragon'] },
 		plugins: [regionsOverlay()],

@@ -1,0 +1,9 @@
+---
+/** Favicon, touch icon and manifest: web/public, or the site's own set under SITE_ICONS (pipeline/src/site.ts). */
+import { siteConfig } from "../../../pipeline/src/site.ts";
+const p = siteConfig().icons;
+---
+<link rel="icon" href={`${p}/favicon.ico`} sizes="48x48" />
+<link rel="icon" type="image/svg+xml" href={`${p}/favicon.svg`} />
+<link rel="apple-touch-icon" href={`${p}/apple-touch-icon.png`} />
+<link rel="manifest" href="/site.webmanifest" />
