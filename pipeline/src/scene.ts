@@ -31,7 +31,7 @@ import { barriers } from "./barriers.ts";
 import { type Road, roofsOnPosts, streetFurniture, streetLamps } from "./props.ts";
 import { roadWidth } from "./roadspec.ts";
 import { greenery, osmTreeCrown } from "./greenery.ts";
-import { ARCADES, arcade, LOOKS, type MeshRef, PAINT, PLACED, type Piece, REBUILDS, type Rings, STRUCTURES, type Structure, TOPS, TOWERS, UMBRELLAS, umbrellas } from "./landmarks.ts";
+import { ARCADES, arcade, LOOKS, type MeshRef, PAINT, PLACED, type Piece, REBUILDS, type Rings, STADIUMS, stadiumStands, STRUCTURES, type Structure, TOPS, TOWERS, UMBRELLAS, umbrellas } from "./landmarks.ts";
 import { frame } from "./frame.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
@@ -1162,6 +1162,44 @@ function convexHull(pts: P2[]): P2[] {
   for (const q of p) { while (lower.length >= 2 && turn(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
   for (const q of [...p].reverse()) { while (upper.length >= 2 && turn(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
   return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
+// football stadiums (landmarks.ts STADIUMS, by OSM name; LoD2 regions): the LoD2 stands between the pitch and the
+// outline give way to open stands with seat rows and a canopy, and the crowns the surface model read on them go
+if (LOD2 && STYLED) {
+  const ground = readJson(join(raw, "ground.json")).elements as any[];
+  for (const el of ground) {
+    const look = STADIUMS[el.tags?.name as keyof typeof STADIUMS];
+    if (!look || el.type === "node") continue;
+    const rings = osmRings(el), outer = rings.outer[0];
+    if (!outer) continue;
+    // the pitch: the outline's inner ring, else the largest leisure=pitch inside it
+    let pitch = rings.inner[0];
+    if (!pitch) {
+      const cands = ground.filter((g) => g.type === "way" && g.tags?.leisure === "pitch" && g.geometry?.length >= 4)
+        .map((g) => ringFromLonLat(g.geometry.map((q: any) => [q.lon, q.lat]))).filter((r): r is P2[] => !!r && inside(centre(r), outer));
+      pitch = cands.sort((a, b) => Math.abs(area2(b)) - Math.abs(area2(a)))[0];
+    }
+    if (!pitch) { console.warn(`  stadium ${el.tags.name}: no pitch inside its outline, skipped`); continue; }
+    const stands = meshes.filter((b) => inside(centre(b.footprint), outer) && !inside(centre(b.footprint), pitch));
+    const base = stands.length ? Math.min(...stands.map((b) => b.base)) : groundAt(...centre(outer));
+    const H = look.height ?? (stands.length ? Math.max(...stands.map((b) => b.height)) : 15);
+    for (const b of stands) meshes.splice(meshes.indexOf(b), 1);
+    pushAll(meshes, stadiumStands(outer, pitch, base, H, look).map(fromPiece));
+    const n = trees.length;
+    dropCrowns((p) => inside(p, outer) && !inside(p, pitch));
+    console.log(`  stadium ${el.tags.name}: ${stands.length} LoD2 stand(s) -> open stands ${H.toFixed(0)} m, ${n - trees.length} crown(s) on them dropped`);
+  }
+}
+// GUGiK regions: crowns the surface model put inside stadium outlines (stands, canopies) are flagged; add the
+// stadium to STADIUMS to rebuild it
+if (region.sources === "gugik") for (const el of readJson(join(raw, "ground.json")).elements as any[]) {
+  const t = el.tags ?? {};
+  if (el.type === "node" || !(t.building === "stadium" || t.leisure === "stadium") || t.name in STADIUMS) continue;
+  const rings = osmRings(el), outer = rings.outer[0];
+  if (!outer) continue;
+  const roofed = meshes.filter((b) => inside(centre(b.footprint), outer));
+  const n = trees.filter((tr) => { const p: P2 = [tr[0], tr[1]]; return inside(p, outer) && !rings.inner.some((r) => inside(p, r)) && roofed.some((b) => inside(p, b.footprint)); }).length;
+  if (n) console.warn(`  check: ${n} crown(s) on the buildings of stadium ${t.name ?? el.id}: add it to landmarks STADIUMS`);
 }
 for (const pl of PLACED) {
   const [la, lo] = pl.at;

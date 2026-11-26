@@ -4,6 +4,7 @@
  * orthophoto); the Wikimedia Commons photos in ATTRIBUTION.md were only looked at for shapes and colours.
  */
 import type { Placed } from "../landmarks.ts";
+import type { StadiumLook } from "./stadium.ts";
 import { beam, CLAD, disc, face, frame, lathe, type Look, type P2, type P3, panel, type Piece, piece, prism, roofFace } from "./shapes.ts";
 
 const BRUSHWOOD = [0.31, 0.25, 0.20], LARCH = [0.78, 0.60, 0.38], SHADE = [0.30, 0.24, 0.19], TILE = [0.76, 0.36, 0.25];
@@ -288,12 +289,24 @@ function basztaDetails(c: P2, base: number, ground: number): Piece[] {
 
 /** Named buildings whose OSM tags give no look (merged over their tags, scene.ts); roofs stay the orthophoto's. */
 export const LOOKS: Record<string, Record<string, string>> = {
+  // a closed arena: a plain light roof (a LOOKS entry makes it bare: no made-up solar panels or plant rooms)
+  "Tauron Arena Kraków": {},
   // the salt works castle: pale butter-yellow plaster, red tiles
   "Zamek Żupny": { "building:colour": "yellow" },
   "Zamek Południowy": { "building:colour": "yellow" },
   // St Clement's: salmon-pink plaster with cream pilasters (photos 2023); its new copper roof reads brown-grey on
   // the 2025 orthophoto (the light green of early 2023 photos was the old one)
   "Kościół pw. Świętego Klemensa w Wieliczce": { "building:colour": "pink" },
+};
+
+/**
+ * Football stadiums rebuilt as open stands (landmarks/stadium.ts), by the OSM name of their outline. Cracovia: red
+ * and white seats, a white steel canopy (photos: pl.wikipedia, Stadion Cracovii); Wisła: red, white and blue seats
+ * under a grey canopy (pl.wikipedia, Stadion Miejski im. Henryka Reymana).
+ */
+export const STADIUMS: Record<string, StadiumLook> = {
+  "Stadion Cracovii im. Józefa Piłsudskiego": { seats: [[0.78, 0.16, 0.18], [0.92, 0.92, 0.92]], canopy: [0.90, 0.91, 0.92], wall: [0.62, 0.63, 0.65], height: 20 },
+  "Synerise Arena - Stadion Miejski im. Henryka Reymana": { seats: [[0.80, 0.14, 0.16], [0.92, 0.92, 0.92], [0.20, 0.32, 0.62]], canopy: [0.72, 0.74, 0.77], wall: [0.58, 0.60, 0.63] },
 };
 
 /** Models at a measured point, for parts OSM does not map on their own. */

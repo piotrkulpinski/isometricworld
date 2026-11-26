@@ -106,6 +106,9 @@ export type Placed = {
   model: (c: P2, base: number, ground: number) => Piece[];
 };
 export const PLACED: Placed[] = [...wieliczka.PLACED];
+/** Football stadiums rebuilt as open stands on their OSM outline (landmarks/stadium.ts), by OSM name. */
+export const STADIUMS = { ...wieliczka.STADIUMS };
+export { stadiumStands, type StadiumLook } from "./landmarks/stadium.ts";
 
 // Zagreb (landmarks/zagreb.ts): looks set directly, rebuilt LoD2 landmarks, the market umbrellas
 export { PAINT, REBUILDS, UMBRELLAS, umbrellas, type MeshRef, type RebuildCtx } from "./landmarks/zagreb.ts";
