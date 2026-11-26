@@ -20,3 +20,8 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   `data/raw/photos/wawel/` (CC BY, see ATTRIBUTION.md). No edits; the first overview read as Wawel (match 0.91).
 - `cracovia` (krakow-test, Stadion Cracovii): frame -18580,-35990,1536,1024, `--base paint --tag krakow-pilot-2c`, painted
   from the render with the open stands (landmarks/stadium.ts), refs from `data/raw/photos/cracovia/` (CC BY). No edits.
+- `wisla` (krakow-mid-2, Stadion Miejski im. Henryka Reymana): frame -19428,-38427,1536,1024, `--base paint`, refs
+  `star-end-stand.jpg`, `star-and-lettering.jpg`, `facade.jpg` from `data/raw/photos/wisla/` (CC BY, see ATTRIBUTION.md).
+  The first overview came back zoomed out (match 0.03) and was dropped; the second matched 0.46. No edits. Key with
+  `--cleanup 24`: this overview redrew its surroundings slightly, and the full clean-up mask covered 85 % of the frame.
+  WISŁA and 1906 sit on the south-east stand, whose seats face away from the camera, so they are not painted.
