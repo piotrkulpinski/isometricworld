@@ -13,7 +13,7 @@
  */
 import { createHash } from "node:crypto";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { DATA, WEB_CACHE } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 
@@ -45,19 +45,34 @@ const stateText = (await get(`${base}/state.json?t=${Date.now()}`)).toString("ut
 const state = JSON.parse(stateText) as State;
 const worldRaw = await get(`${base}/data/world.json?t=${Date.now()}`);
 const format = (JSON.parse(worldRaw.toString("utf8")) as { format?: string }).format ?? "avif";
+if (!["avif", "webp"].includes(format)) throw new Error(`unexpected tile format ${format}`);
+// every path comes from the remote state: only names export writes, and never outside the cache
+const NAME = /^[A-Za-z0-9_-]+$/, INT = /^-?\d+$/, HASH = /^[0-9a-f]{10}$/;
+function check(rel: string, h: string): [string, string] {
+  if (!HASH.test(h) || !resolve(out, rel).startsWith(resolve(out) + sep)) throw new Error(`refusing ${rel} (${h}) from the remote state`);
+  return [rel, h];
+}
 
 // every file the state names: [path under regions/<region>/, content hash]
 const files: Array<[string, string]> = [];
 for (const [layer, { hashes }] of Object.entries(state.layers)) {
   for (const [key, h] of Object.entries(hashes)) {
-    if (layer === "height") { const [x, y] = key.split("_"); files.push([`tiles/height/${x}/${y}.webp`, h]); continue; }
-    const [z, xy] = key.split("/"), [x, y] = xy.split("_");
-    files.push([`tiles/${layer}/${z}/${x}/${y}.${format}`, h]);
+    if (!NAME.test(layer)) throw new Error(`refusing layer ${layer} from the remote state`);
+    if (layer === "height") {
+      const [x, y, ...rest] = key.split("_");
+      if (rest.length || !INT.test(x) || !INT.test(y ?? "")) throw new Error(`refusing height tile ${key}`);
+      files.push(check(`tiles/height/${x}/${y}.webp`, h)); continue;
+    }
+    const m = /^(\d+)\/(-?\d+)_(-?\d+)$/.exec(key);
+    if (!m) throw new Error(`refusing ${layer} tile ${key}`);
+    files.push(check(`tiles/${layer}/${m[1]}/${m[2]}/${m[3]}.${format}`, h));
   }
 }
 for (const [name, h] of Object.entries(state.data)) {
   if (name === "world.json") continue; // last, below
-  files.push([name.startsWith("preview/") ? `${name}.${h}.avif` : `data/${name}.${h}.json`, h]);
+  const preview = name.startsWith("preview/"), stem = preview ? name.slice(8) : name;
+  if (!NAME.test(stem)) throw new Error(`refusing data file ${name} from the remote state`);
+  files.push(check(preview ? `preview/${stem}.${h}.avif` : `data/${stem}.${h}.json`, h));
 }
 console.log(`${region}: ${files.length} files from ${base} → ${out}${reuse ? ` (reusing ${reuse})` : ""}`);
 
