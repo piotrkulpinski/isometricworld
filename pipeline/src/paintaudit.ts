@@ -7,6 +7,8 @@
  *   pedObjects   pedestrian ground painted with saturated or dark objects (cars, shopfronts, umbrellas)
  *   redWalls     buildings painted brick/tile red where the render's colour is not red (plaster turned brick)
  *   streetTrees  road surface painted as tree or grass green where the render shows no green
+ *   inventedTrees tree crowns (dark vegetation green) painted on roofs, stands, decks or squares: where the render
+ *                has a building or pedestrian paving and no tree
  *   greens       painted grass and tree crowns minus the render's on the same cells: hue, saturation, value
  *                (the painted patch must read as one with the styled map around it)
  *   seam         mean colour difference with the right and bottom neighbour in their shared overlap
@@ -51,6 +53,8 @@ export interface Flaws {
   /** shares of the pedestrian cells, and their counts (a cell is ~1 m²) */
   window: string; ped: number; pedAsphalt: number; pedObjects: number; pedAsphaltCells?: number; pedObjectCells?: number; walls: number; redWalls: number;
   road: number; streetTrees: number;
+  /** m² of painted crowns where the render has a structure (roof, stand, deck) or paving and no tree */
+  inventedTrees: number;
   /** painted minus render, mean over the cells where both are green: grass (ground) and crowns (above it) */
   grassCells: number; grassDH: number; grassDS: number; grassDV: number; crownCells: number; crownDH: number; crownDS: number; crownDV: number;
   seamRight?: number; seamBottom?: number; match?: number;
@@ -209,10 +213,20 @@ export async function windowFlaws(ctx: Ctx, i: number, j: number, painting: stri
   const cls = classes ?? (await windowClasses(ctx, i, j));
   const R = cells((await crop(ctx, "render", i * STRIDE, j * STRIDE)) as Buffer);
   const P = cells(await sharp(painting).removeAlpha().resize(WIN, WIN).raw().toBuffer());
-  const f: Flaws = { window: `${i}_${j}`, ped: 0, pedAsphalt: 0, pedObjects: 0, walls: 0, redWalls: 0, road: 0, streetTrees: 0, grassCells: 0, grassDH: 0, grassDS: 0, grassDV: 0, crownCells: 0, crownDH: 0, crownDS: 0, crownDV: 0 };
-  const flags = new Uint8Array(N * N); // 1 asphalt, 2 object, 4 red wall, 8 street tree
+  const f: Flaws = { window: `${i}_${j}`, ped: 0, pedAsphalt: 0, pedObjects: 0, walls: 0, redWalls: 0, road: 0, streetTrees: 0, inventedTrees: 0, grassCells: 0, grassDH: 0, grassDS: 0, grassDV: 0, crownCells: 0, crownDH: 0, crownDS: 0, crownDV: 0 };
+  const flags = new Uint8Array(N * N); // 1 asphalt, 2 object, 4 red wall, 8 street tree, 16 invented tree
+  const crown = (c: readonly [number, number, number]) => isGreen(...c) && hsv(...c)[2] < 0.55;
+  // invented trees: only crowns more than ~6 m (6 cells) from any tree crown in the render (painted crowns sit a
+  // few metres off the render's, which is fine)
+  const near = new Uint8Array(N * N), RAD = 6;
+  for (let k = 0; k < N * N; k++) {
+    if (cls[k] !== -1 || !isGreen(R[k * 3], R[k * 3 + 1], R[k * 3 + 2])) continue; // render crowns (above ground), not lawns
+    const x0 = k % N, y0 = Math.floor(k / N);
+    for (let y = Math.max(0, y0 - RAD); y <= Math.min(N - 1, y0 + RAD); y++) for (let x = Math.max(0, x0 - RAD); x <= Math.min(N - 1, x0 + RAD); x++) near[y * N + x] = 1;
+  }
   for (let k = 0; k < N * N; k++) {
     const r = [R[k * 3], R[k * 3 + 1], R[k * 3 + 2]] as const, p = [P[k * 3], P[k * 3 + 1], P[k * 3 + 2]] as const;
+    if ((cls[k] === PED || cls[k] === -1) && crown(p) && !near[k]) { f.inventedTrees++; flags[k] |= 16; }
     if (cls[k] === PED) {
       f.ped++;
       // no render test for asphalt: the render's cast shadows make its paving look grey
@@ -232,6 +246,19 @@ export async function windowFlaws(ctx: Ctx, i: number, j: number, painting: stri
       const [ph, ps, pv] = hsv(...p), [rh, rs, rv] = hsv(...r);
       f.grassCells++; f.grassDH += ph - rh; f.grassDS += ps - rs; f.grassDV += pv - rv;
     }
+  }
+  // invented trees: crown-sized blobs only (a cell with at least 4 of its 8 neighbours flagged), not green shutters,
+  // balcony plants or a painted green facade
+  f.inventedTrees = 0;
+  const raw = Uint8Array.from(flags);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const k = y * N + x;
+    if (!(raw[k] & 16)) continue;
+    let nb = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if ((dx || dy) && y + dy >= 0 && x + dx >= 0 && y + dy < N && x + dx < N && raw[(y + dy) * N + x + dx] & 16) nb++;
+    }
+    if (nb >= 4) f.inventedTrees++; else flags[k] &= ~16;
   }
   f.pedAsphaltCells = f.pedAsphalt; f.pedObjectCells = f.pedObjects;
   if (f.ped) { f.pedAsphalt /= f.ped; f.pedObjects /= f.ped; }
@@ -265,12 +292,13 @@ export async function grassStats(files: string[]) {
   return { pixels: n, hue: h / n, sat: s / n, val: v / n };
 }
 
-const TYPES = { pedAsphalt: 1, pedObjects: 2, redWalls: 4, streetTrees: 8 } as const;
+const TYPES = { pedAsphalt: 1, pedObjects: 2, redWalls: 4, streetTrees: 8, inventedTrees: 16 } as const;
 /** Severity thresholds per flaw: [high, medium, low] (below: smaller is worse). Tuned on the Kraków pilot. */
 const SEVERITY: Record<string, { value: (r: Flaws) => number | undefined; levels: number[]; below?: boolean; show: (v: number) => string }> = {
   pedAsphalt: { value: (r) => r.pedAsphaltCells, levels: [300, 120, 40], show: (v) => `${v} m² asphalt on pedestrian ground` },
   pedObjects: { value: (r) => r.pedObjectCells, levels: [100, 40, 15], show: (v) => `${v} m² cars/stalls on pedestrian ground` },
   redWalls: { value: (r) => r.redWalls, levels: [0.06, 0.035, 0.02], show: (v) => `${(v * 100).toFixed(1)} % of buildings turned red` },
+  inventedTrees: { value: (r) => r.inventedTrees, levels: [150, 60, 25], show: (v) => `${v} m² of tree crowns on roofs, stands or paving` },
   streetTrees: { value: (r) => r.streetTrees, levels: [0.2, 0.1, 0.05], show: (v) => `${(v * 100).toFixed(1)} % of road painted green` },
   seam: { value: (r) => Math.max(r.seamRight ?? 0, r.seamBottom ?? 0) || undefined, levels: [50, 42, 36], show: (v) => `overlap differs by ${v.toFixed(0)}/255` },
   // distance of the painted greens from the render's, in units of (8° hue, 0.08 saturation, 0.08 value)
