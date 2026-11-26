@@ -26,15 +26,16 @@ import { readHeights } from "./heights.ts";
 
 const WIN = 1024, STRIDE = 896, CELL = 4, N = WIN / CELL, T = CAMERA.tile;
 /** Ground classes of the top-down raster. */
-export const PED = 1, ROAD = 2, GRASS = 3, PATH = 4;
+export const PED = 1, ROAD = 2, GRASS = 3, PATH = 4, RAIL = 5;
 const CLASS_OF: Record<string, number> = {
   plaza: PED, paving: PED, stalls: PED,
   street: ROAD, lane: ROAD, highway: ROAD, parking: ROAD, dirtroad: ROAD,
   park: GRASS, lawn: GRASS, meadow: GRASS,
+  rail: RAIL, // tram and rail tracks across squares: brown rails are not objects
   path: PATH, sidewalk: PATH, cycle: PATH, flowerbed: PATH, playground: PATH, pitch: PATH,
 };
 /** Drawing order: later classes cover earlier ones (roads cross plazas, paths cross lawns). */
-const ORDER = [GRASS, PATH, PED, ROAD];
+const ORDER = [GRASS, PATH, PED, ROAD, RAIL];
 /**
  * OSM draws a pedestrian street as a line with a default width (5 m) while the render paves it from wall to wall:
  * widen pedestrian lines to this before anything else is drawn (buildings are cut out by height, roads and lawns
@@ -74,7 +75,7 @@ export async function auditContext(areaName: string, opts: { ground?: string; re
     for (const f of features) {
       if (CLASS_OF[f.k] !== c || f.b) continue; // skip bridge decks (drawn above the ground)
       if (f.r) fillRings(cls, W, H, f.r.map((r: number[][]) => r.map(toCell)), c);
-      else if (f.l) strokeLine(cls, W, H, f.l.map(toCell), ((f.w ?? 2) + (c === ROAD ? ROAD_MARGIN : 0)) / RES / 2, c);
+      else if (f.l) strokeLine(cls, W, H, f.l.map(toCell), ((f.w ?? 2) + (c === ROAD || c === RAIL ? ROAD_MARGIN : 0)) / RES / 2, c);
     }
   const classAt = (e: number, n: number) => {
     const x = Math.floor((e - meta.x0) / RES), y = Math.floor((n - meta.y0) / RES);
