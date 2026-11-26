@@ -79,7 +79,7 @@ R2_SECRET_ACCESS_KEY="$(op read "$TOKEN_REF" | tr -d '\n' | shasum -a 256 | cut 
 npm run publish -- wieliczka
 ```
 
-It prints the file count and size (first publish: 73,616 tiles and previews + 25 data files, 2,057 MB), asks `[y/N]`, uploads tiles and previews, then the data files, then
+It prints the file count and size (first publish: 73,616 tiles + 25 data files and previews, 2,057.3 MB), asks `[y/N]`, uploads tiles and previews, then the data files, then
 `state.json` and `world.json` last, checks `https://tiles.isometrickrakow.com/regions/wieliczka/data/world.json`,
 records the state in `WEB_STATE` and empties the cache.
 
