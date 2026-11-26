@@ -116,6 +116,11 @@ export class Traffic {
   private tramGrid = new Map<string, Footprint[]>();
   /** canvas boxes of the vehicles drawn last ([x0, y0, x1, y1], shadows included): where the foreground goes over them */
   boxes: number[][] = [];
+  /**
+   * Over painted map tiles (export.ts data file "painted"): draw vehicles like the painted cities' (an ink outline,
+   * a soft contact shadow instead of the render's long cast shadow, which the painting doesn't have).
+   */
+  painted: ((p: Vec3) => boolean) | null = null;
   /** coach parks (life.coaches); the sun's shadow per metre of height, like the styled render's */
   private parks: Park[] = [];
   private shadow: [number, number];
@@ -714,10 +719,15 @@ export class Traffic {
   private detailed(ctx: CanvasRenderingContext2D, proj: (p: Vec3) => [number, number], c: Vec3, d: [number, number], v: Vehicle) {
     const r: [number, number] = [d[1], -d[0]], hl = v.len / 2, hw = v.wid / 2, a = v.alpha, F = this.camFwd;
     const P = (x: number, y: number, z: number): Vec3 => [c[0] + d[0] * x + r[0] * y, c[1] + d[1] * x + r[1] * y, c[2] + z];
+    const painted = this.painted?.(c) ?? false;
+    const p0 = proj(c), pe = proj([c[0] + 1, c[1], c[2]]), pn = proj([c[0], c[1] + 1, c[2]]);
+    const pxPerM = (Math.hypot(pe[0] - p0[0], pe[1] - p0[1]) + Math.hypot(pn[0] - p0[0], pn[1] - p0[1])) / 2;
+    let inked = false; // painted: body and cabin faces get the ink outline
     const poly = (pts: Vec3[], color: string, alpha = 1) => {
       ctx.globalAlpha = alpha * a; ctx.fillStyle = color; ctx.beginPath();
       pts.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.closePath(); ctx.fill();
+      if (inked) ink(ctx, pxPerM);
     };
     const rgb = (k: number, col = v.color) => `rgb(${Math.min(255, col[0] * k) | 0},${Math.min(255, col[1] * k) | 0},${Math.min(255, col[2] * k) | 0})`;
     // faces: +x front, -x rear, +y right, -y left; seen when the outward normal points against the view
@@ -725,9 +735,13 @@ export class Traffic {
     // shadow: the footprint swept along the sun's shadow by the height, as a hull in screen space
     const sh = this.shadow, H = v.hei;
     const foot = [P(hl, hw, 0.02), P(hl, -hw, 0.02), P(-hl, -hw, 0.02), P(-hl, hw, 0.02)];
-    const pts = [...foot, ...foot.map((p) => [p[0] + sh[0] * H * 0.9, p[1] + sh[1] * H * 0.9, p[2]] as Vec3)].map(proj);
-    ctx.globalAlpha = 0.22 * a; ctx.fillStyle = "#000"; ctx.beginPath();
-    hull(pts).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
+    if (painted) poly(foot.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2]] as Vec3), "#000", 0.25); // soft contact shadow, as painted
+    else {
+      const pts = [...foot, ...foot.map((p) => [p[0] + sh[0] * H * 0.9, p[1] + sh[1] * H * 0.9, p[2]] as Vec3)].map(proj);
+      ctx.globalAlpha = 0.22 * a; ctx.fillStyle = "#000"; ctx.beginPath();
+      hull(pts).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
+    }
+    inked = painted;
     // a box from z0 to z1 over [x0, x1] × [-w, w]: its seen sides, then the top
     const box = (x0: number, x1: number, w: number, z0: number, z1: number, side: (face: number) => string, top: string | null) => {
       if (seen(0, -1)) poly([P(x0, -w, z0), P(x1, -w, z0), P(x1, -w, z1), P(x0, -w, z1)], side(0));
@@ -765,6 +779,7 @@ export class Traffic {
       if (seen(1, 0)) poly([P(hl + 0.01, -hw + 0.15, w0 - 0.1), P(hl + 0.01, hw - 0.15, w0 - 0.1), P(hl + 0.01, hw - 0.15, w1), P(hl + 0.01, -hw + 0.15, w1)], GLASS);
       if (big && K !== "minibus") poly([P(-hl * 0.3, -0.6, H), P(hl * 0.1, -0.6, H), P(hl * 0.1, 0.6, H + 0.25), P(-hl * 0.3, 0.6, H + 0.25)], "#c9cdd2"); // roof unit
     }
+    inked = false;
     // lights: head lights at the front, tail lights at the rear, where those ends are seen
     const lamp = (x: number, col: string) => {
       for (const y of [-hw + 0.3, hw - 0.3]) poly([P(x, y - 0.17, 0.55), P(x, y + 0.17, 0.55), P(x, y + 0.17, 0.75), P(x, y - 0.17, 0.75)], col);

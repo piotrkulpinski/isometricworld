@@ -423,10 +423,52 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
 const FG_MIN_Z = 5;
 /**
  * Painted tiles' foreground: the painting's own pixels (the render's would show as a box of other colours around
- * every vehicle), under the render's mask grown by this many px, so roofs the painter drew a little wider than the
- * model still cover the vehicles behind them.
+ * every vehicle). Its mask: the render's BUILDINGS (not its crowns: the painter draws its own trees, which never match
+ * them), grown by up to this many px where the painting overhangs the model (its pixel differs from the render's,
+ * never onto the paving), plus the painting's own tree crowns (isCrown), so vehicles pass under the painted trees.
  */
 const FG_PAINT_GROW = 8;
+/** a pixel of vegetation green (hue 50–138: not copper roofs, ~150), saturated enough to be a crown or lawn */
+const isVeg = (r: number, g: number, b: number) => {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (!d || mx === 0 || d / mx < 0.22) return false;
+  const h = (mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60;
+  return h >= 50 && h <= 138;
+};
+
+/** a painted tree crown: vegetation green and darker than the painted lawns (value ~0.69; crowns ~0.39) */
+const isCrown = (r: number, g: number, b: number) => Math.max(r, g, b) < 140 && isVeg(r, g, b);
+
+/**
+ * Painted map tiles of a region with a foreground layer (life.foreground), for the traffic: the export keeps them in
+ * `paintedArt` so road and track samples there take their cover from the painting (paintedCover) and the viewer
+ * draws vehicles over them in the painted style (data file "painted").
+ */
+let paintedArt = new Map<Key, string>();
+const paintedPx = new Map<Key, Promise<Buffer>>();
+/**
+ * On a painted tile: is the ground point at art pixel (x, y) under a painted tree crown? (most of a 5×5 px patch
+ * vegetation green, the road itself never is). null: not on a painted tile here.
+ */
+async function paintedCover(x: number, y: number): Promise<boolean | null> {
+  const tx = Math.floor(x / CAMERA.tile), ty = Math.floor(y / CAMERA.tile), k = key(tx, ty), f = paintedArt.get(k);
+  if (!f || f === REMOTE || !existsSync(f)) return null;
+  let px = paintedPx.get(k);
+  if (!px) {
+    px = sharp(f).removeAlpha().resize(CAMERA.tile, CAMERA.tile).raw().toBuffer();
+    paintedPx.set(k, px);
+    if (paintedPx.size > 64) paintedPx.delete(paintedPx.keys().next().value!);
+  }
+  const b = await px, lx = Math.round(x - tx * CAMERA.tile), ly = Math.round(y - ty * CAMERA.tile);
+  let n = 0, g = 0;
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    const xx = lx + dx, yy = ly + dy;
+    if (xx < 0 || yy < 0 || xx >= CAMERA.tile || yy >= CAMERA.tile) continue;
+    const o = (yy * CAMERA.tile + xx) * 3;
+    n++; if (isCrown(b[o], b[o + 1], b[o + 2])) g++;
+  }
+  return g > n / 2;
+}
 
 /** Grow a 1-channel mask by r px (square max filter, separable). */
 function growMask(m: Buffer, size: number, r: number) {
@@ -460,7 +502,7 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
       const g = edgeGrid((tx * SPLIT + i) * TS, (ty * SPLIT + j) * TS);
       grids.push(g ? hash(Buffer.from(g.buffer)) : "in");
     }
-    const paint = painted.get(k), over = paint && paint !== REMOTE && existsSync(paint) ? `:paint${FG_PAINT_GROW}:${sourceHash(paint)}` : "";
+    const paint = painted.get(k), over = paint && paint !== REMOTE && existsSync(paint) ? `:paint3-${FG_PAINT_GROW}:${sourceHash(paint)}` : "";
     stampOf.set(k, hash(`fg1:${sourceHash(f)}:${sourceHash(maskOf(f))}:${grids.join(",")}${over}@${FORMAT}${QUALITY}`));
   }
   const pubHash = (z: number, x: number, y: number) => st.hashes[`${z}/${x}_${y}`];
@@ -478,7 +520,21 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
       const paint = painted.get(k), own = paint && paint !== REMOTE && existsSync(paint) ? paint : null;
       const rgb = await sharp(own ?? f).removeAlpha().resize(A, A).raw().toBuffer();
       let mask = await sharp(maskOf(f)).extractChannel(0).raw().toBuffer();
-      if (own) mask = growMask(mask, A, FG_PAINT_GROW);
+      if (own) { // buildings only, grown where the painting overhangs them
+        const ren = await sharp(f).removeAlpha().raw().toBuffer();
+        for (let p = 0; p < A * A; p++) if (isVeg(ren[p * 3], ren[p * 3 + 1], ren[p * 3 + 2])) mask[p] = 0;
+        const grown = growMask(mask, A, FG_PAINT_GROW);
+        for (let p = 0; p < A * A; p++) {
+          if (grown[p] <= mask[p]) continue;
+          const d = (Math.abs(rgb[p * 3] - ren[p * 3]) + Math.abs(rgb[p * 3 + 1] - ren[p * 3 + 1]) + Math.abs(rgb[p * 3 + 2] - ren[p * 3 + 2])) / 3;
+          if (d > 40 && !isVeg(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2])) mask[p] = grown[p];
+        }
+        // the painting's crowns, with their ink outline (1 px)
+        const crowns = Buffer.alloc(A * A);
+        for (let p = 0; p < A * A; p++) if (isCrown(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2])) crowns[p] = 255;
+        const outlined = growMask(crowns, A, 1);
+        for (let p = 0; p < A * A; p++) if (outlined[p] > mask[p]) mask[p] = outlined[p];
+      }
       const out = Buffer.alloc(A * A * 4);
       for (let p = 0; p < A * A; p++) { out[p * 4] = rgb[p * 3]; out[p * 4 + 1] = rgb[p * 3 + 1]; out[p * 4 + 2] = rgb[p * 3 + 2]; out[p * 4 + 3] = mask[p]; }
       for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++) {
@@ -903,9 +959,11 @@ async function exportRoads(areas: string[], heights: Heights) {
             const j = start + i, ud = deck ? deck.at(deck.cum[j] + (deck.cum[j + 1] - deck.cum[j]) * f2, e0[0], e0[1]) : terrainU(e0[0], e0[1]);
             const u = ud !== null && Number.isFinite(ud) ? ud : null;
             if (u === null) fallback++;
-            const { e, vis: cover } = await placePoint(heights, lat, lon, u);
-            // the foreground layer covers them under trees and behind houses (only bridges still hide them, below)
-            const vis = REGIONS[activeRegion()].life?.foreground ? 1 : cover;
+            const { e, vis: cover, x: px, y: py } = await placePoint(heights, lat, lon, u);
+            // the foreground layer covers them under trees and behind houses (only bridges still hide them, below);
+            // on painted tiles it covers houses only, and they fade out under the painted crowns
+            const crown = REGIONS[activeRegion()].life?.foreground ? await paintedCover(px, py) : null;
+            const vis = REGIONS[activeRegion()].life?.foreground ? (crown ? 0 : 1) : cover;
             total++; occluded += 1 - vis;
             samples.push(Math.round(e[0] * 10) / 10, Math.round(e[1] * 10) / 10, Math.round(e[2] * 10) / 10, vis);
           }
@@ -1077,7 +1135,8 @@ async function exportTrains(areas: string[], heights: Heights) {
         const [e0, n0] = latLonEnu(lat, lon), ground = terrainU(e0, n0);
         const ud = deck ? deck.at(cum + d * f, e0, n0) : ground;
         const p = await placePoint(heights, lat, lon, ud !== null && Number.isFinite(ud) ? ud : null);
-        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : p.vis;
+        const crown = REGIONS[activeRegion()].life?.foreground ? await paintedCover(p.x, p.y) : null; // painted tiles: see exportRoads
+        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : crown === null ? p.vis : crown ? 0 : 1;
         total++; hidden += 1 - vis;
         samples.push(Math.round(p.e[0] * 10) / 10, Math.round(p.e[1] * 10) / 10, Math.round(p.e[2] * 10) / 10, vis);
       }
@@ -1394,6 +1453,11 @@ async function main() {
     console.log(`  --partial: ${here.photo} renders and ${here.art} paintings here, the rest (${photo.size - here.photo} rendered, ${art.size - here.art} painted tiles) as published`);
   }
   const heights = new Heights(areas.map((a) => join(DERIVED, a, "height")));
+  if (REGIONS[activeRegion()].life?.foreground) {
+    paintedArt = art;
+    // the viewer draws vehicles over these art tiles in the painted style (traffic.ts paintedAt)
+    if (art.size) writeData("painted", JSON.stringify([...art.keys()].sort()));
+  }
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
@@ -1423,7 +1487,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}), ...(paintedArt.size ? { painted: dataFile("painted") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

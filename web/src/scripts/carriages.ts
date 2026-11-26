@@ -7,6 +7,7 @@
  */
 import type { Road } from "./traffic.ts";
 import { groundLookup } from "./roads.ts";
+import { ink } from "./ink.ts";
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
 
 type Vec3 = [number, number, number];
@@ -109,6 +110,8 @@ export class Carriages {
 
   /** canvas boxes of the carriages drawn last ([x0, y0, x1, y1]): where the foreground goes over them */
   boxes: number[][] = [];
+  /** over painted map tiles: ink outlines like the painted cities' vehicles (traffic.ts `painted`) */
+  painted: ((p: Vec3) => boolean) | null = null;
 
   /** one carriage: centre `c` on the ground, travelling along `d`; the horse in front */
   private carriage(ctx: CanvasRenderingContext2D, proj: (p: Vec3) => [number, number], c: Vec3, d: [number, number], car: Carriage) {
@@ -120,6 +123,10 @@ export class Carriages {
       ctx.closePath(); ctx.fill();
     };
     const rgb = ([R, G, B]: RGB, k: number) => `rgb(${Math.min(255, R * k) | 0},${Math.min(255, G * k) | 0},${Math.min(255, B * k) | 0})`;
+    const p0 = proj(c), pe = proj([c[0] + 1, c[1], c[2]]), pn = proj([c[0], c[1] + 1, c[2]]);
+    const pxPerM = (Math.hypot(pe[0] - p0[0], pe[1] - p0[1]) + Math.hypot(pn[0] - p0[0], pn[1] - p0[1])) / 2;
+    const inked = this.painted?.(c) ?? false;
+    const face = (pts: Vec3[], color: string) => { poly(pts, color); if (inked) ink(ctx, pxPerM); };
     /** box from a0 to a1 along the travel direction, half-width hw, from z0 to z1, sides lit like the cars */
     const box = (a0: number, a1: number, hw: number, z0: number, z1: number, color: RGB) => {
       const base = [pt(a1, hw, z0), pt(a1, -hw, z0), pt(a0, -hw, z0), pt(a0, hw, z0)];
@@ -127,9 +134,9 @@ export class Carriages {
       for (let i = 0; i < 4; i++) {
         const a = base[i], b = base[(i + 1) % 4];
         if ((b[1] - a[1]) * this.camFwd[0] - (b[0] - a[0]) * this.camFwd[1] >= 0) continue; // faces away
-        poly([a, b, top[(i + 1) % 4], top[i]], rgb(color, 0.72 + 0.1 * (i % 2)));
+        face([a, b, top[(i + 1) % 4], top[i]], rgb(color, 0.72 + 0.1 * (i % 2)));
       }
-      poly(top, rgb(color, 1.05));
+      face(top, rgb(color, 1.05));
     };
     // soft contact shadow under carriage and horse
     ctx.globalAlpha = 0.22;

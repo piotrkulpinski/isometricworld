@@ -30,7 +30,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; airport?: string; mine?: string; search?: string };
+  files?: { painted?: string; "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; airport?: string; mine?: string; search?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -219,7 +219,11 @@ function loadAnimations() {
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
     files.airport ? Promise.all([import("./airport.ts"), fetch(`${BASE}/data/${files.airport}`).then((r) => (r.ok ? r.json() : null))]) : null,
     REGIONS[REGION]?.life?.carriages ? import("./carriages.ts") : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons, LightAircraft, Signs }, { decodeRoads }, { Pigeons: Pecking }, data, rail, taxi, carriagesModule]) => {
+    files.painted ? fetch(`${BASE}/data/${files.painted}`).then((r) => (r.ok ? r.json() : [])) : [],
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons, LightAircraft, Signs }, { decodeRoads }, { Pigeons: Pecking }, data, rail, taxi, carriagesModule, paintedTiles]) => {
+    // painted art tiles (1024 px, export.ts "painted"): vehicles over them are drawn in the painted style
+    const paintedSet = new Set<string>(paintedTiles as string[]), M = world.enu2px;
+    const paintedAt = paintedSet.size ? (p: [number, number, number]) => paintedSet.has(`${Math.floor((M[0][0] * p[0] + M[0][1] * p[1] + M[0][2] * p[2]) / 1024)}_${Math.floor((M[1][0] * p[0] + M[1][1] * p[1] + M[1][2] * p[2]) / 1024)}`) : null;
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)], REGIONS[REGION].rail?.stock);
     // with the taxi network the airliners land, park and take off again; without it they fade out on the runway
@@ -232,6 +236,7 @@ function loadAnimations() {
     if (roofSigns?.length) signs = new Signs(world.enu2px, roofSigns);
     const life = REGIONS[REGION]?.life;
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)], 1, { detailed: life?.vehicles === "detailed", coaches: life?.coaches });
+    if (traffic) traffic.painted = paintedAt;
     if (roads.length) cats = new Cats(roads, world.enu2px);
     if (traffic && trains && REGIONS[REGION].rail) traffic.yieldTo(trains); // Zagreb's trams share the streets
     if (roads.length && life?.pigeons?.length) { // the paving's height: the nearest road sample's
@@ -244,6 +249,7 @@ function loadAnimations() {
     }
     if (roads.length && carriagesModule && life?.carriages)
       carriages = new carriagesModule.Carriages(world.enu2px, life.carriages.loop, life.carriages.count, roads, [Math.sin(heading), Math.cos(heading)]);
+    if (carriages) carriages.painted = paintedAt;
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
