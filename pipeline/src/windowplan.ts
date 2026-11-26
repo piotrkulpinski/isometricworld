@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { AREAS, openArea } from "./areas.ts";
-import { CAMERA, enuToPixel } from "./camera.ts";
+import { activeRegion, CAMERA, enuToPixel } from "./camera.ts";
+import { REGIONS } from "./places.ts";
 import { insideRing, outlineEdgeDistance, outlinePixels } from "./outline.ts";
 import { DATA, DERIVED, readJson } from "./paths.ts";
 
@@ -21,7 +22,9 @@ const WIN = 1024, STRIDE = 896, T = CAMERA.tile;
 export const MIN_M2 = 40;
 const GROUND_M2 = (WIN * CAMERA.mpp) ** 2 * Math.SQRT2;
 
-export interface WindowInfo { inside: boolean; share: number; buildings: number }
+export interface WindowInfo { inside: boolean; share: number; buildings: number; trees: number }
+/** Bumped when what a WindowInfo holds changes (the disk cache is rebuilt). */
+const VERSION = 2;
 
 /** The windows over an area's render tiles (as paint.ts windows()). */
 export function areaWindows(area: string): string[] {
@@ -33,12 +36,21 @@ export function areaWindows(area: string): string[] {
 }
 
 /** Building footprint share per window over an area's scene bins (each building once, by its centre). */
-function areaShares(area: string, into: Map<string, { m2: number; n: number }>, seen: Set<string>) {
+function areaShares(area: string, into: Map<string, { m2: number; n: number; trees: number }>, seen: Set<string>) {
+  const add = (px: number, py: number, f: (v: { m2: number; n: number; trees: number }, k: string) => void) => {
+    for (let j = Math.floor((py - WIN) / STRIDE) + 1; j * STRIDE <= py; j++)
+      for (let i = Math.floor((px - WIN) / STRIDE) + 1; i * STRIDE <= px; i++) {
+        const k = `${i}_${j}`, v = into.get(k) ?? { m2: 0, n: 0, trees: 0 };
+        f(v, k);
+        into.set(k, v);
+      }
+  };
   const dir = join(DERIVED, area, "scene");
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".json")) continue;
-    for (const m of (JSON.parse(readFileSync(join(dir, f), "utf8")).m ?? []) as any[]) {
+    const bin = JSON.parse(readFileSync(join(dir, f), "utf8")), bases: number[] = [];
+    for (const m of (bin.m ?? []) as any[]) {
       const fp: number[][] = m[4], roof: number[] = m[2], h: number = m[5];
       if (!fp?.length || !roof?.length) continue;
       const key = `${fp[0][0]},${fp[0][1]},${h}`;
@@ -50,6 +62,7 @@ function areaShares(area: string, into: Map<string, { m2: number; n: number }>, 
       if (m2 < MIN_M2) continue;
       let z = Infinity;
       for (let k = 2; k < roof.length; k += 3) z = Math.min(z, roof[k]);
+      bases.push(z - h);
       // spread the footprint over points every `step` m inside it (a hall at a window's corner counts only there)
       const xs = fp.map((p) => p[0]), ys = fp.map((p) => p[1]), step = Math.max(3, Math.sqrt(m2) / 8);
       const pts: Array<[number, number]> = [];
@@ -59,14 +72,18 @@ function areaShares(area: string, into: Map<string, { m2: number; n: number }>, 
       const counted = new Set<string>();
       for (const [x, y] of pts) {
         const [px, py] = enuToPixel([x, y, z - h]);
-        for (let j = Math.floor((py - WIN) / STRIDE) + 1; j * STRIDE <= py; j++)
-          for (let i = Math.floor((px - WIN) / STRIDE) + 1; i * STRIDE <= px; i++) {
-            const k = `${i}_${j}`, v = into.get(k) ?? { m2: 0, n: 0 };
-            v.m2 += m2 / pts.length;
-            if (!counted.has(k)) { v.n++; counted.add(k); }
-            into.set(k, v);
-          }
+        add(px, py, (v, k) => { v.m2 += m2 / pts.length; if (!counted.has(k)) { v.n++; counted.add(k); } });
       }
+    }
+    // tree crowns (π r² each, overlaps counted twice), at the ground of the bin's buildings or the region's
+    bases.sort((a, b) => a - b);
+    const ground = bases.length ? bases[Math.floor(bases.length / 2)] : REGIONS[activeRegion()].groundH;
+    for (const t of (bin.t ?? []) as number[][]) {
+      const key = `t${t[0]},${t[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const [px, py] = enuToPixel([t[0], t[1], ground]);
+      add(px, py, (v) => { v.trees += Math.PI * t[2] * t[2]; });
     }
   }
 }
@@ -93,19 +110,19 @@ export function regionWindows(area: string): Map<string, WindowInfo> {
     const file = join(DATA, "windowplan", `${region}.json`);
     if (existsSync(file)) {
       const saved = readJson(file);
-      if (saved.stamp === stamp && saved.minM2 === MIN_M2) { cache.set(region, new Map(Object.entries(saved.windows))); openArea(area); return cache.get(region)!; }
+      if (saved.stamp === stamp && saved.minM2 === MIN_M2 && saved.version === VERSION) { cache.set(region, new Map(Object.entries(saved.windows))); openArea(area); return cache.get(region)!; }
     }
-    const shares = new Map<string, { m2: number; n: number }>(), seen = new Set<string>();
+    const shares = new Map<string, { m2: number; n: number; trees: number }>(), seen = new Set<string>();
     for (const a of names) areaShares(a, shares, seen);
     const out = new Map<string, WindowInfo>();
     for (const a of names) for (const k of areaWindows(a)) {
       if (out.has(k)) continue;
       const [i, j] = k.split("_").map(Number), s = shares.get(k);
-      out.set(k, { inside: touchesOutline(i, j), share: s ? s.m2 / GROUND_M2 : 0, buildings: s?.n ?? 0 });
+      out.set(k, { inside: touchesOutline(i, j), share: s ? s.m2 / GROUND_M2 : 0, buildings: s?.n ?? 0, trees: s ? s.trees / GROUND_M2 : 0 });
     }
     cache.set(region, out);
     mkdirSync(join(DATA, "windowplan"), { recursive: true });
-    writeFileSync(file, JSON.stringify({ stamp, minM2: MIN_M2, windows: Object.fromEntries(out) }));
+    writeFileSync(file, JSON.stringify({ stamp, minM2: MIN_M2, version: VERSION, windows: Object.fromEntries(out) }));
   }
   openArea(area);
   return cache.get(region)!;

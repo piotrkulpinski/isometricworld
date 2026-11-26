@@ -31,6 +31,8 @@ import { REGIONS } from "./places.ts";
 import { regionWindows } from "./windowplan.ts";
 /** --min-buildings: a window with this many buildings (≥ 40 m² each) is painted whatever its share (a hamlet's edge). */
 const MIN_BUILDINGS_N = 10;
+/** --min-buildings: a window with this share of tree crowns is painted too (woods and parks; only fields and water stay styled). */
+const MIN_TREES = 0.1;
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
@@ -338,8 +340,8 @@ const { values: args, positionals } = parseArgs({
     ref: { type: "string" },
     // only windows that touch the region's outline (places.ts outline; a grid region's city boundary)
     outline: { type: "boolean", default: false },
-    // skip unpainted windows whose building footprint share (windowplan.ts) is below this and that hold fewer than
-    // MIN_BUILDINGS_N buildings: fields, forest, water and allotments keep the styled render, faded into the painted
+    // skip unpainted windows whose building footprint share (windowplan.ts) is below this, that hold fewer than
+    // MIN_BUILDINGS_N buildings and less than MIN_TREES tree cover: open fields and water keep the styled render, faded into the painted
     // neighbours across the overlap (Kraków: 0.02)
     "min-buildings": { type: "string" },
     // seam previews (with --tag and --assemble): treat these windows as skipped, e.g. "-17_-29,-22_-33"
@@ -1184,7 +1186,7 @@ async function main() {
   if (args.outline || args["min-buildings"]) {
     const info = regionWindows(areaName), min = Number(args["min-buildings"] ?? 0);
     const painted = (k: string) => existsSync(join(winDir, `${k}.png`)) || SIBLINGS.some((d) => existsSync(join(d, "windows", `${k}.png`)));
-    for (const [k, w] of info) if (((args.outline && !w.inside) || (w.share < min && w.buildings < MIN_BUILDINGS_N)) && !painted(k)) SKIP.add(k);
+    for (const [k, w] of info) if (((args.outline && !w.inside) || (w.share < min && w.buildings < MIN_BUILDINGS_N && w.trees < MIN_TREES)) && !painted(k)) SKIP.add(k);
     const before = wins.length;
     wins = wins.filter(([i, j]) => !SKIP.has(`${i}_${j}`));
     console.log(`  ${before - wins.length} of ${before} windows skipped (${args.outline ? "outside the outline, " : ""}building share < ${(min * 100).toFixed(1)} %)`);
