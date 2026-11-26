@@ -1,0 +1,3 @@
+This is a map around the Cracovia football stadium in Kraków (red seat stands under a white canopy, around a green pitch).
+- KEEP, pixel for pixel exactly as they are: the whole stadium, its stands, canopy, masts, outer walls down to their foot, and its pitch.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the streets, the meadow, lawns, paths, trees and every other building.

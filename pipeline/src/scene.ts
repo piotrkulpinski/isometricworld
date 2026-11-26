@@ -645,7 +645,15 @@ const fountains: Array<{ ring?: P2[]; at?: P2 }> = [];
 const arcades: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts ARCADES
 const rebuilds: Array<{ ring: P2[]; key: string }> = []; // landmarks.ts REBUILDS
 const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, string> }> = [];
-const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean; use?: string }> = [];
+const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean; use?: string; historic?: 1 | 2 }> = [];
+/** preset historicFacades: 2 a church, castle or palace (stone), 1 another historic building (old plaster), 0 neither */
+const HISTORIC_FACADES = STYLED && styleOf(region.style).historicFacades;
+function historicOf(t: Record<string, string>): 0 | 1 | 2 {
+  if (t.amenity === "place_of_worship" || /^(church|cathedral|chapel|basilica|monastery|synagogue|temple|mosque|castle|palace)$/.test(t.building ?? "")
+    || /^(castle|church|palace|monastery|manor)$/.test(t.historic ?? "")) return 2;
+  const y = parseInt(t.start_date ?? "", 10);
+  return t.historic || t.heritage || (y > 0 && y < 1945) ? 1 : 0;
+}
 for (const el of osm.elements) {
   const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
   // structures built on their OSM outline (landmarks.ts STRUCTURES): a graduation tower's brushwood walls
@@ -686,8 +694,9 @@ for (const el of osm.elements) {
     const use = OSM_MESH && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
     const paint = PAINT[t.name] ?? {}; // Zagreb landmarks: colours as rendered
     const w = wallLook(t);
-    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, !OSM_MESH), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
-    if (look.roof || look.wall || look.style !== null || look.bare || look.use) looks.push(look);
+    const hist = HISTORIC_FACADES ? historicOf(t) : 0;
+    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, !OSM_MESH), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use, ...(hist ? { historic: hist } : {}) }; // landmarks: no solar panels etc.
+    if (look.roof || look.wall || look.style !== null || look.bare || look.use || hist) looks.push(look);
     // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are built below, and
     // without a 3D source every OSM building is (not open structures: Dolac's upper market is building=marketplace
     // over the stalls ZG3D does have)
@@ -728,6 +737,17 @@ if (fountains.length) {
 }
 console.log(`  osm buildings (outside municipal layer): ${osmCount}`);
 if (looks.length) console.log(`  osm roof/wall looks: ${looks.length}`);
+// preset historicFacades: historic and religious buildings from the full OSM outlines too (osm.json has only those with
+// looks of their own: Wawel castle is only in osm-buildings.json)
+if (HISTORIC_FACADES && existsSync(join(raw, "osm-buildings.json"))) {
+  let n = 0;
+  for (const el of readJson(join(raw, "osm-buildings.json")).elements as any[]) {
+    const hist = el.type === "node" ? 0 : historicOf(el.tags ?? {});
+    if (!hist) continue;
+    for (const ring of osmRings(el).outer) { looks.push({ ring, area: Math.abs(area2(ring)), roof: null, style: null, wall: null, historic: hist }); n++; }
+  }
+  console.log(`  historic façades: ${n} OSM outlines`);
+}
 // the smallest OSM footprint (a building:part before its building) holding a LoD2 building's centre, per attribute; 50 m grid
 looks.sort((a, b) => a.area - b.area);
 const lookGrid = new Map<string, typeof looks>();
@@ -742,7 +762,7 @@ for (const r of looks) {
 }
 const lookAt = (pt: P2) => {
   const hits = lookGrid.get(`${Math.floor(pt[0] / 50)}_${Math.floor(pt[1] / 50)}`)?.filter((r) => inside(pt, r.ring)) ?? [];
-  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null, bare: hits.some((r) => r.bare), use: hits.find((r) => r.use)?.use };
+  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null, bare: hits.some((r) => r.bare), use: hits.find((r) => r.use)?.use, historic: Math.max(0, ...hits.map((r) => r.historic ?? 0)) };
 };
 
 // Bridges and decks recorded as buildings (Arlozorov / Savidor over the Ayalon): any footprint a
@@ -1180,13 +1200,23 @@ if (LOD2 && STYLED) {
       pitch = cands.sort((a, b) => Math.abs(area2(b)) - Math.abs(area2(a)))[0];
     }
     if (!pitch) { console.warn(`  stadium ${el.tags.name}: no pitch inside its outline, skipped`); continue; }
-    const stands = meshes.filter((b) => inside(centre(b.footprint), outer) && !inside(centre(b.footprint), pitch));
-    const base = stands.length ? Math.min(...stands.map((b) => b.base)) : groundAt(...centre(outer));
-    const H = look.height ?? (stands.length ? Math.max(...stands.map((b) => b.height)) : 15);
+    // the stands: LoD2 blocks inside the outline with a footprint corner within 50 m of the pitch (an outline that is
+    // the whole sports ground, Wisła's, also holds training halls and offices); the stadium's own outline is their hull
+    const near = (q: P2) => pitch.some((a, i) => {
+      const b = pitch[(i + 1) % pitch.length], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const u = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L2));
+      return Math.hypot(q[0] - a[0] - u * dx, q[1] - a[1] - u * dy) < 50;
+    });
+    const stands = meshes.filter((b) => inside(centre(b.footprint), outer) && !inside(centre(b.footprint), pitch) && b.footprint.some(near));
+    if (!stands.length) continue; // not this area's (its buildings are another area's)
+    const hull = convexHull([...stands.flatMap((b) => b.footprint), ...pitch]);
+    const base = Math.min(...stands.map((b) => b.base));
+    // canopy height: the stands' typical top (the tallest blocks are floodlight masts and stair towers)
+    const hs = stands.map((b) => b.height).sort((a, b) => a - b), H = look.height ?? hs[Math.floor(hs.length * 0.6)];
     for (const b of stands) meshes.splice(meshes.indexOf(b), 1);
-    pushAll(meshes, stadiumStands(outer, pitch, base, H, look).map(fromPiece));
+    pushAll(meshes, stadiumStands(hull, pitch, base, H, look).map(fromPiece));
     const n = trees.length;
-    dropCrowns((p) => inside(p, outer) && !inside(p, pitch));
+    dropCrowns((p) => inside(p, hull)); // the pitch has no trees either: crowns there are the canopy's inner edge
     console.log(`  stadium ${el.tags.name}: ${stands.length} LoD2 stand(s) -> open stands ${H.toFixed(0)} m, ${n - trees.length} crown(s) on them dropped`);
   }
 }
@@ -1197,6 +1227,8 @@ if (region.sources === "gugik") for (const el of readJson(join(raw, "ground.json
   if (el.type === "node" || !(t.building === "stadium" || t.leisure === "stadium") || t.name in STADIUMS) continue;
   const rings = osmRings(el), outer = rings.outer[0];
   if (!outer) continue;
+  // a closed arena named in LOOKS (Tauron Arena): a bare roof, even where osm.json predates the LOOKS entry
+  if (t.building && t.name in LOOKS) for (const m of meshes as Mesh[]) if (inside(centre(m.footprint), outer)) m.look = { ...lookAt(centre(m.footprint)), bare: true };
   const roofed = meshes.filter((b) => inside(centre(b.footprint), outer));
   const n = trees.filter((tr) => { const p: P2 = [tr[0], tr[1]]; return inside(p, outer) && !rings.inner.some((r) => inside(p, r)) && roofed.some((b) => inside(p, b.footprint)); }).length;
   if (n) console.warn(`  check: ${n} crown(s) on the buildings of stadium ${t.name ?? el.id}: add it to landmarks STADIUMS`);
@@ -1362,7 +1394,15 @@ for (const b of meshes as Mesh[]) {
     else if (HALL.test(use) && !OFFICE.test(use) && hs < 14 && Math.abs(area2(b.footprint)) > 800) s = 4; // industry, depots, sports halls
   }
   if (s === 6 && b.fn === "zg3d" && region.sources !== "zg3d") s = 1; // OSM-built flats: prefab panels are Zagreb's (renderer.ts #ifdef ZG), post-war blocks elsewhere
-  const entry: unknown[] = [s === 12 ? s : look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
+  let facade = s === 12 ? s : look.style ?? s;
+  // preset historicFacades: no glass tower or office façade on historic and religious buildings
+  if (HISTORIC_FACADES && (facade === 3 || facade === 5)) {
+    // its centre or any footprint corner in a historic outline (a castle tower standing half outside the castle's)
+    const h = Math.max(b.kind === "church" ? 2 : 0, "historic" in look ? (look.historic as number) ?? 0 : 0,
+      ...b.footprint.filter((_, i) => i % Math.max(1, Math.floor(b.footprint.length / 12)) === 0).map((p) => lookAt(p).historic ?? 0));
+    if (h) facade = h === 2 ? 2 : 0;
+  }
+  const entry: unknown[] = [facade, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   const bare = ("bare" in look && look.bare) || null, flags = facadeFlags(b);
   if (roof || look.wall || bare || b.storeys || flags) entry.push(roof, look.wall);
   if (bare || b.storeys || flags) entry.push(bare);

@@ -1,0 +1,8 @@
+EDIT image 1, the painted map around the Cracovia football stadium in Kraków (Stadion Cracovii im. Józefa Piłsudskiego, 2010), in EXACTLY its own style and the style of image 3: crisp clean isometric illustration, fine detail, soft even daylight, light ambient occlusion, no long shadows, no photographic noise.
+
+Repaint ONLY the stadium (the rectangular ring of stands around the green pitch in the middle of image 1) as it really is (see the photos, images 4-5; they say nothing about position or size):
+- Four covered grandstands rising steeply from the pitch: many rows of RED plastic seats with a few white rows and stairs (aisles) between seat blocks, a concrete front wall along the pitch.
+- Over the upper part of every stand a light flat roof canopy of white steel and pale translucent panels, carried by a row of white steel trusses / masts that rise above the roof along the outer edge; the canopy's inner edge is a thin white beam with floodlights.
+- The outer facades: plain white and light grey cladding with tall narrow vertical slits and glass at the corners, stair towers at the corners; no window grid of an office, no balconies, no solar panels, no rooftop boxes, no trees anywhere on the stands or the roof.
+- The pitch: bright green striped grass with white line markings, two goals, a narrow pale running strip between the pitch and the stands.
+Everything else (streets, the Błonia meadow, lawns, paths, trees, every other building) stays EXACTLY as in image 1, pixel for pixel. Same camera and scale as image 1; the stadium's footprint, outline and height exactly as in images 1 and 2. No text, lettering, logos, banners or club names anywhere, even where the photos show them.

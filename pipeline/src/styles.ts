@@ -84,6 +84,10 @@ export interface StylePreset {
   /** Streets closed to ordinary traffic (roadspec isPedestrianised: a motor ban, an old-town living street for
    *  permit holders, residents or deliveries only) drawn as pedestrian paving, not as asphalt; false: as roads. */
   carFreePaving: boolean;
+  /** Historic and religious buildings (OSM historic, heritage, church/castle/palace…, place_of_worship, start_date
+   *  before 1945; BDOT10k churches) never get the glass tower (3) or office (5) façade: stone (2) for churches,
+   *  castles and palaces, old plaster (0) for the rest; false: the façade the height and function give. */
+  historicFacades: boolean;
   /** Lessons from AI repaints of the render (Stuttgart): the ground in the painted house style (green gardens and
    *  parks, one dark asphalt with an ink kerb line, kerb shadows, bold markings, rounded inside corners; ponds with a
    *  shore path; runways with markings and lights, mown grass strips; tracks on shared gravel beds with bold rails,
@@ -105,7 +109,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, carFreePaving: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, carFreePaving: false, historicFacades: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -140,6 +144,8 @@ export const STYLES = {
     roofDetail: true,
     // Kraków's Old Town and Kazimierz: living streets for permit holders only (strefa ograniczonego ruchu)
     carFreePaving: true,
+    // Wawel (a 45 m tower got the glass tower façade), Dębniki's Salesian church, Old Town tenements as offices
+    historicFacades: true,
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },

@@ -18,3 +18,5 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
 - `wawel` (krakow-test, Wawel Royal Castle and Cathedral): frame -15641,-33493,1536,1024, `--base paint --tag
   krakow-pilot-2c` (an experiment: reads paint-krakow-pilot-2c/, records into cutouts-krakow-pilot-2c.json), refs from
   `data/raw/photos/wawel/` (CC BY, see ATTRIBUTION.md). No edits; the first overview read as Wawel (match 0.91).
+- `cracovia` (krakow-test, Stadion Cracovii): frame -18580,-35990,1536,1024, `--base paint --tag krakow-pilot-2c`, painted
+  from the render with the open stands (landmarks/stadium.ts), refs from `data/raw/photos/cracovia/` (CC BY). No edits.
