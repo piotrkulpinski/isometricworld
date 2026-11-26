@@ -26,6 +26,7 @@ import { groundPixel, seaH, readHeights } from "./heights.ts";
 import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
+import { auditContext, windowFlaws } from "./paintaudit.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
@@ -97,6 +98,14 @@ interface Local {
    * the last image; regions without it get exactly the prompt and inputs they had before.
    */
   styleLocal?: string;
+  /** Extra rules for the geometry section of the prompt (one "- …" line each, ending in a newline). */
+  rules?: string;
+  /**
+   * Refuse paintings that break the ground map (paintaudit.ts windowFlaws), repainting up to 3 times and keeping the
+   * least flawed: m² of asphalt or of cars, stalls and shopfronts on pedestrian ground (OSM plazas, paving and
+   * car-free streets), and the share of buildings painted brick or tile red where the render isn't red.
+   */
+  groundChecks?: { pedAsphalt: number; pedObjects: number; redWalls: number };
   /**
    * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
    * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
@@ -172,7 +181,7 @@ species of image 4 by shape: rounded crowns in several greens = lime, maple, oak
 pale crowns on white trunks = birch; small round crowns = fruit trees; tall narrow columns = poplar; broad drooping \
 pale crowns = willow; dark tiered cones = spruce; a high flat crown on a bare trunk = pine; short dark columns = thuja.`,
     treesOf: "Kraków",
-    treeHint: " (broad rounded deciduous crowns in early-summer green, spruces as dark cones, pines with high flat crowns)",
+    treeHint: " (broad rounded deciduous crowns in a natural, not too bright summer green, spruces as dark cones, pines with high flat crowns)",
     materials: `Draw believable Kraków \
 and Lesser Poland materials: historic tenement houses (kamienice) in cream, ochre, salmon, pale yellow and grey plaster with \
 cornices, tall windows and red clay-tile roofs with dormers around courtyards; older districts mixing exposed red brick and \
@@ -186,6 +195,22 @@ trees, grass or water. Tall towers stay tall. Draw no trains, trams or buses any
 map): leave rail and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-poland.png"),
     styleLocal: join(PIPELINE, "style", "reference-poland.png"),
+    // Piotr's review of the Kraków pilot: asphalt, cars and shopfronts on the Old Town's pedestrian streets (the
+    // render's blue cast shadows read as asphalt), plaster turned brick, lime-green grass
+    rules: `- Pale cream, beige or stone-coloured ground in image 1 is PEDESTRIAN PAVING: squares, pedestrian streets, \
+passages and courtyards (in Kraków's Old Town and Kazimierz most streets are car-free). Paint it as pale stone slabs or \
+setts in the colour of image 1, with no asphalt, no lane markings, no crosswalks, no kerbs, no parked or moving cars, \
+vans or bikes, and no market stalls, umbrellas, café gardens or shopfronts that image 1 doesn't show. Only the darker \
+grey asphalt of image 1 is a road; cars only on asphalt and in car parks.
+- Image 1 has soft blue-grey cast shadows on the ground and on walls. A shadow is not a surface: never paint a shadowed \
+strip as asphalt, a road, water or another material; paint the surface under it in even daylight.
+- Keep each wall's material and colour from image 1: plastered walls (white, cream, grey, yellow, ochre, pink, pastel) \
+stay plaster in that colour; draw red brick only where image 1's wall is red-brown. Keep each roof's colour: grey metal \
+roofs stay grey, red tile stays red, green copper stays green.
+- Grass, lawns and parks in a muted, natural mid green (slightly grey-green, like a lawn in late summer), never bright \
+lime or yellow-green.
+`,
+    groundChecks: { pedAsphalt: 120, pedObjects: 40, redWalls: 0.035 },
   },
 };
 
@@ -690,8 +715,9 @@ async function paintWindow(i: number, j: number) {
       + (local.styleLocal ? STYLE_LOCAL_IMAGE(localN).replace("{country}", local.country) : ""))
     .replace("{facades}", (await facadeNotes(i, j)) + (args.hint ? `- ${args.hint}\n` : ""))
     .replace("{aerialRule}", (HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "") + (GUIDE ? GUIDE_RULE : "")
-      + (local.styleLocal ? STYLE_LOCAL_RULE(localN) : ""));
+      + (local.styleLocal ? STYLE_LOCAL_RULE(localN) : "") + (local.rules ?? ""));
   if (GUIDE) prompt = prompt.replace(/1\. input\.png:[^\n]*\n/, GUIDE_IMAGE);
+  let best: { score: number; file: string; note: string } | null = null; // groundChecks: the least flawed attempt so far
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
     if (overBudget()) { console.warn(`  ${i}_${j}: paint budget of $${BUDGET} reached ($${spent.toFixed(2)} spent), skipped`); return; }
@@ -735,16 +761,41 @@ async function paintWindow(i: number, j: number) {
         continue;
       }
       const warp = structured && r.score > r.identity + 0.01;
-      await applyRegistration(join(work, "out.png"), winFile(i, j), warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });
+      let note = "";
+      if (local.groundChecks) {
+        const reg = join(work, "registered.png"), g = local.groundChecks;
+        await applyRegistration(join(work, "out.png"), reg, warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });
+        const { flaws: f } = await windowFlaws(await groundContext(), i, j, reg);
+        const score = Math.max(f.pedAsphaltCells! / g.pedAsphalt, f.pedObjectCells! / g.pedObjects, f.redWalls / g.redWalls);
+        note = ` ground: ${f.pedAsphaltCells} m² asphalt, ${f.pedObjectCells} m² objects on pedestrian ground, ${(f.redWalls * 100).toFixed(1)} % red`;
+        writeFileSync(join(work, "ground.json"), JSON.stringify({ attempt, score, ...f }));
+        if (score > 1 && (!best || score < best.score)) { best = { score, file: join(work, "best.png"), note }; copyFileSync(reg, best.file); }
+        if (score > 1 && attempt < 3) { console.warn(`  ${i}_${j}: breaks the ground map (${note.trim()}), repainting`); continue; }
+        if (score > 1 && best && best.score < score) { copyFileSync(best.file, reg); note = best.note; }
+        if (score > 1) console.warn(`  ${i}_${j}: still breaks the ground map after 3 attempts, kept the least flawed`);
+        await writeAtomic(sharp(reg).png(), winFile(i, j));
+        rmSync(reg, { force: true }); rmSync(join(work, "best.png"), { force: true });
+      } else await applyRegistration(join(work, "out.png"), winFile(i, j), warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });
       console.log(`  ${i}_${j}: ${((Date.now() - t0) / 1000).toFixed(0)}s edges=${edges.join("+") || "-"} match=${r.score.toFixed(2)}`
-        + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : ""));
+        + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : "") + note);
       // keep qa.json + codex.log for debugging; the images are ~6 MB per window
       for (const f of ["input.png", "height.png", "style.png", "trees.png", "style-local.png", "aerial.png", "out.png", ...REFS.map((_, k) => `ref${k + 1}.png`)]) rmSync(join(work, f), { force: true });
       return;
     }
     console.error(`  ${i}_${j}: attempt ${attempt} failed, see ${join(work, "codex.log")}`);
   }
+  // groundChecks: the last attempt gave no painting, keep the least flawed earlier one
+  const kept = best as { file: string; note: string } | null;
+  if (kept && existsSync(kept.file)) {
+    await writeAtomic(sharp(kept.file).png(), winFile(i, j));
+    rmSync(kept.file, { force: true });
+    console.warn(`  ${i}_${j}: kept the least flawed attempt (${kept.note.trim()})`);
+  }
 }
+
+/** Ground classes of the area for groundChecks (built once, on the first window that needs them). */
+let groundCtx: ReturnType<typeof auditContext> | null = null;
+const groundContext = () => (groundCtx ??= auditContext(areaName));
 
 /** Feather-blend painted windows into 1024 art tiles; partly covered tiles fade into the render. */
 // ---- sea colour harmonisation -------------------------------------------------------------------

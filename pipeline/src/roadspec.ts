@@ -43,3 +43,12 @@ export function isCarFree(t: Record<string, string>) {
   // not "private" or "permissive": driveways, estate roads and car-park aisles still carry cars
   return ["no", "agricultural", "forestry"].includes(access) || (t.highway === "living_street" && isStone(t));
 }
+
+/**
+ * Closed to ordinary traffic, for the ground's look (preset carFreePaving): car-free (above), or a living street
+ * open only to permit holders, residents, deliveries or access (Kraków's Old Town and Kazimierz zones).
+ */
+export function isPedestrianised(t: Record<string, string>) {
+  const access = t.motor_vehicle ?? t.motorcar ?? t.vehicle ?? t.access;
+  return isCarFree(t) || (t.highway === "living_street" && ["permit", "private", "delivery", "destination"].includes(access));
+}

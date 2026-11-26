@@ -29,7 +29,7 @@ import { parkLayout } from "./parking.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
-import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
+import { ROAD, isOneway, isPedestrianised, roadWidth } from "./roadspec.ts";
 import { styleOf } from "./styles.ts";
 import { zg3dBases } from "./zg3d.ts";
 
@@ -70,6 +70,8 @@ const PARKED = STYLED && styleOf(region.style).parkedCars;
 const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
 const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
+/** Preset `carFreePaving`: streets closed to ordinary traffic are drawn as pedestrian paving (roadspec isPedestrianised). */
+const CAR_FREE_PAVING = STYLED && styleOf(region.style).carFreePaving;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
@@ -309,12 +311,13 @@ for (const el of osm.elements) {
         continue;
       }
       if (t.man_made) { features.push({ k: "pier", l, w: Number(t.width) || 4 }); continue; }
-      const road = ROAD[t.highway], path = PATH[t.highway];
+      const paved = CAR_FREE_PAVING && ROAD[t.highway] && isPedestrianised(t); // drawn and treated as a pedestrian street
+      const road = paved ? undefined : ROAD[t.highway], path = paved ? PATH.pedestrian : PATH[t.highway];
       if (!road && !path) continue;
       const oneway = isOneway(t);
       const lanes = Number(t.lanes) || 0;
       const w = road ? roadWidth(t) : Number(String(t.width).replace(",", ".")) || path;
-      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" ? "plaza"
+      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" || paved ? "plaza"
         : DETAIL && t.footway === "sidewalk" ? "sidewalk" : "path";
       const sides = DETAIL && kind === "street" ? sidewalkSides(t) : undefined;
       if (road && el.nodes) for (const id of el.nodes) {
