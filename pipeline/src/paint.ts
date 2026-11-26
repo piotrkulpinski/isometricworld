@@ -26,6 +26,7 @@ import { groundPixel, seaH, readHeights } from "./heights.ts";
 import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
+import { lowDisk } from "./diskguard.ts";
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
@@ -1134,9 +1135,19 @@ async function assemble(all = false, only?: Set<string>) {
   console.log(`  assembled ${written} art tiles`);
 }
 
+/** Set when free disk space ran out: no new window starts, the run ends after the ones in flight (exit code 3). */
+let diskStop: string | null = null;
+const diskOk = () => !(diskStop ??= lowDisk());
+function exitOnDisk() {
+  if (!diskStop) return;
+  console.error(`  STOPPED: ${diskStop}. Windows in flight finished; free space and run again to resume.`);
+  process.exit(3);
+}
+
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   const q = [...items];
-  await Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()!); }));
+  await Promise.all(Array.from({ length: n }, async () => { while (q.length && diskOk()) await fn(q.shift()!); }));
+  exitOnDisk();
 }
 
 async function main() {
@@ -1228,6 +1239,11 @@ async function main() {
       rmSync(winFile(i, j), { force: true });
     }
   }
+  // Each window gets a rank, ring by ring and within a ring two passes (even, then odd perimeter positions), so it
+  // continues the window's painted inner and ring neighbours. A window starts as soon as its lower-ranked
+  // neighbours are done, not when the whole pass is: the same neighbours are painted when it starts as with a barrier
+  // per pass (a higher-ranked neighbour waits for it), but no worker idles while one slow window retries.
+  const rank = new Map<string, number>(), order: Array<[number, number]> = [];
   for (let r = 0; r <= maxR; r++) {
     const ring: Array<[number, number]> = [];
     if (r === 0) ring.push([ci, cj]);
@@ -1237,12 +1253,50 @@ async function main() {
       for (let k = 0; k < 2 * r; k++) ring.push([ci + r - k, cj + r]);  // bottom, right → left
       for (let k = 0; k < 2 * r; k++) ring.push([ci - r, cj + r - k]);  // left, bottom → top
     }
-    for (const pass of [0, 1]) {
-      const todo = ring.filter(([i, j], k) => k % 2 === pass && have.has(`${i}_${j}`));
-      await pool(todo, Number(args.j), ([i, j]) => paintWindow(i, j));
-    }
-    await assemble(); // finished tiles become visible ring by ring
+    for (const pass of [0, 1]) ring.forEach(([i, j], k) => {
+      if (k % 2 === pass && have.has(`${i}_${j}`)) { rank.set(`${i}_${j}`, 2 * r + pass); order.push([i, j]); }
+    });
   }
+  const done = new Set<string>(), started = new Set<string>(), J = Number(args.j);
+  const ready = ([i, j]: [number, number]) => {
+    const own = rank.get(`${i}_${j}`)!;
+    return [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]].every(([a, b]) => {
+      const k = `${a}_${b}`, rk = rank.get(k);
+      return rk === undefined || rk >= own || done.has(k);
+    });
+  };
+  // finished tiles become visible as rings complete: one assembly at a time, never more than one waiting
+  let assembling: Promise<void> = Promise.resolve(), queued = false, lastRing = -1;
+  const assembleSoon = () => {
+    if (queued) return;
+    queued = true;
+    assembling = assembling.then(async () => { queued = false; await assemble(); });
+  };
+  await new Promise<void>((resolve, reject) => {
+    let running = 0;
+    const next = () => {
+      if (!diskOk()) { if (!running) resolve(); return; } // finish what is in flight, start nothing new
+      for (const w of order) {
+        if (running >= J) break;
+        const k = `${w[0]}_${w[1]}`;
+        if (started.has(k) || !ready(w)) continue;
+        started.add(k);
+        running++;
+        paintWindow(w[0], w[1]).then(() => {
+          running--;
+          done.add(k);
+          // rings before the one holding the first unfinished window are complete
+          const open = order.find(([a, b]) => !done.has(`${a}_${b}`));
+          const ringDone = open ? Math.floor(rank.get(`${open[0]}_${open[1]}`)! / 2) - 1 : maxR;
+          if (ringDone > lastRing) { lastRing = ringDone; assembleSoon(); }
+          if (done.size === order.length || (diskStop && !running)) resolve(); else next();
+        }, reject);
+      }
+    };
+    if (!order.length) resolve(); else next();
+  });
+  await assembling;
+  exitOnDisk();
   // then the tiles are rebuilt with the harmonised sea: all of them after a full run; after a partial one
   // (--window, --near, --parts) only those under its windows, with the saved sea colour, so nothing else changes
   const partial = !!(args.window || args.near || args.parts);

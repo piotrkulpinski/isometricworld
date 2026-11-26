@@ -54,6 +54,7 @@ import { FILTERS, localOsm } from "./osmlocal.ts";
 import { airportNetwork } from "./airport.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
 import { fetchPublishedState, stateHash } from "./webstate.ts";
+import { lowDiskThrottled } from "./diskguard.ts";
 
 const TS = 512;                  // web tile size
 const SPLIT = CAMERA.tile / TS;  // web tiles per art tile edge
@@ -259,6 +260,9 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   const produced = new Set<string>(); // "z/x_y" of every tile of this export
   const save = async (img: ReturnType<typeof sharp>, z: number, x: number, y: number, stamp: string) => {
     const buf = await img.avif({ quality: QUALITY, effort: 4 }).toBuffer();
+    // out of disk: stop before this tile enters the state, so a rerun encodes it and everything after it
+    const low = lowDiskThrottled();
+    if (low) { checkpoint(true); throw new Error(`export STOPPED: ${low}. The state is saved; free space and run again to resume.`); }
     const id = `${z}/${x}_${y}`, file = join(root, `${z}`, `${x}`, `${y}.${FORMAT}`);
     st.hashes[id] = hash(buf);
     st.sources[id] = stamp;

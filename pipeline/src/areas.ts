@@ -137,6 +137,15 @@ export const AREAS: Record<string, Area> = {
   "wieliczka-mine-1645": { title: "Salt mine · level I in 1645", region: "wieliczka", bbox: MINE_BBOX, mine: "1645" },
 };
 
+// A region drawn on another's grid (places.ts gridOf), named by REGION=<id> or as a CLI argument (export -- krakow):
+// its areas are the grid region's that match its `areas`, for this whole process (siblings, exports, archives)
+const VIEW = process.env.REGION ?? process.argv.slice(2).find((a) => REGIONS[a]?.gridOf);
+if (VIEW) {
+  const r = REGIONS[VIEW];
+  if (!r) throw new Error(`REGION=${VIEW}: unknown region`);
+  if (r.gridOf) for (const [n, a] of Object.entries(AREAS)) if (a.region === r.gridOf && new RegExp(r.areas ?? "").test(n)) a.region = VIEW;
+}
+
 /** Look up an area and switch the camera to its region: call before any projection. */
 export function openArea(name: string): Area {
   const area = AREAS[name];

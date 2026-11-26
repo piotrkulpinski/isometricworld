@@ -39,6 +39,9 @@ const { values: args, positionals } = parseArgs({
     frame: { type: "string" }, base: { type: "string", default: "paint" }, aerial: { type: "boolean", default: false }, "aerial-source": { type: "string", default: "lgl" },
     style: { type: "string", default: "reference.png" }, ref: { type: "string", multiple: true, default: [] }, box: { type: "string" },
     tag: { type: "string" },
+    // key: keep the overview's clean-up only within this many px of the keyed landmark (an overview that redrew its
+    // surroundings would otherwise paste them back as speckle); unset: every pixel the overview changed
+    cleanup: { type: "string" },
   },
 });
 const [areaName, name, cmd, promptArg] = positionals;
@@ -203,6 +206,10 @@ ${output(join(dir, "key.png"))}`;
     let d = Buffer.alloc(OW * OH);
     for (let i = 0; i < OW * OH; i++) { const p = i * 3; d[i] = Math.abs(a[p] - inp[p]) + Math.abs(a[p + 1] - inp[p + 1]) + Math.abs(a[p + 2] - inp[p + 2]) > 45 ? 255 : 0; }
     d = await sharp(d, { raw: { width: OW, height: OH, channels: 1 } }).median(5).blur(4).threshold(20).extractChannel(0).raw().toBuffer();
+    if (args.cleanup) { // only near the landmark: the keyed mask grown by --cleanup px
+      const near = await sharp(Buffer.from(out), { raw: { width: OW, height: OH, channels: 1 } }).blur(Math.max(1, Number(args.cleanup) / 2)).threshold(1).extractChannel(0).raw().toBuffer();
+      for (let i = 0; i < OW * OH; i++) if (!near[i]) d[i] = 0;
+    }
     for (let i = 0; i < OW * OH; i++) out[i] = Math.max(out[i], d[i]);
   }
   await sharp(out, { raw: { width: OW, height: OH, channels: 1 } }).png().toFile(join(dir, "mask.png"));
