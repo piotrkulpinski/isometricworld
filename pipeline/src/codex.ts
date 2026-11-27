@@ -5,8 +5,9 @@ import { join } from "node:path";
 
 /**
  * No --ephemeral: the image tool reads the attached images back from the session ("requested the last 5 conversation
- * images, but only 0 were available" without one). Each run with images persists ~13 MB under $CODEX_HOME/sessions, so
- * point CODEX_HOME at a big disk (links to ~/.codex/auth.json and config.toml); the log in cwd/codex.log is the record.
+ * images, but only 0 were available" without one). Each run with images persists ~13 MB under $CODEX_HOME/sessions:
+ * give painting its own CODEX_HOME (links to ~/.codex/auth.json and config.toml) on a fast disk, and move old sessions
+ * and generated_images off it. On a hard disk, parallel runs lost the same images in a third of the calls (Kraków, Nov 2026).
  * `model`: the Codex model that drives the image tool (else CODEX_MODEL, else ~/.codex/config.toml's);
  * `effort`: its reasoning effort.
  */
