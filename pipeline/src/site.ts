@@ -10,7 +10,7 @@
  *   SITE_MAKERS=Made by [Piotr Kulpiński](https://kulpinski.dev) · Wieliczka by [Maciek Chmura](https://maciek.cloud/)
  *   SITE_SOURCE=https://github.com/<you>/isometricworld   # the code this site was built from (ODbL: the method)
  *   SITE_ICONS=/sites/isometric-krakow   # folder in web/public with this site's favicon set
- *   SITE_REDIRECTS=wieliczka:krakow      # old city links this site no longer builds → a city it does (301)
+ *   SITE_HOME_ONLY=true                  # only `/` (the home city's map): no city pages, every other path 404
  *
  * With SITE_MAKERS set, the map footer shows those lines instead of the region's makers, followed by
  * "Built on Isometric World by Dmytro Krasun".
@@ -42,8 +42,8 @@ export interface Site {
   icons: string;
   /** file name (no extension) of the social card of `/` in web/public/og */
   homeOg: string;
-  /** old city slug → city slug it now opens (301, query kept) */
-  redirects: Record<string, string>;
+  /** only `/` is built (the home city's map); no /<city> pages */
+  homeOnly: boolean;
 }
 
 const slug = (t: string) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L")
@@ -53,7 +53,7 @@ export function siteConfig(): Site {
   const e = env();
   const name = e.SITE_NAME || UPSTREAM.name, home = e.SITE_HOME || "";
   if (home && !CITIES[home]) throw new Error(`SITE_HOME=${home} is not a city in places.ts`);
-  return {
+  const site: Site = {
     name, home,
     regions: list(e.SITE_REGIONS),
     description: e.SITE_DESCRIPTION || (home ? `${CITIES[home].title}: an isometric city map from open data.` : "Isometric city maps from open data."),
@@ -61,17 +61,15 @@ export function siteConfig(): Site {
     source: e.SITE_SOURCE || UPSTREAM.source,
     icons: (e.SITE_ICONS || "").replace(/\/+$/, ""),
     homeOg: name === UPSTREAM.name ? "index" : slug(name),
-    redirects: Object.fromEntries(list(e.SITE_REDIRECTS).map((pair) => {
-      const [from, to] = pair.split(":").map((s) => s.trim());
-      if (!/^[a-z0-9-]+$/.test(from ?? "") || !CITIES[to ?? ""]) throw new Error(`SITE_REDIRECTS: "${pair}" is not <old-slug>:<city slug>`);
-      return [from, to];
-    })),
+    homeOnly: /^(1|true|yes)$/i.test(e.SITE_HOME_ONLY ?? ""),
   };
+  if (site.homeOnly && !home) throw new Error("SITE_HOME_ONLY needs SITE_HOME (the city `/` opens)");
+  return site;
 }
 
-/** the cities this site builds pages for */
-export const siteCities = (site: Site) =>
-  Object.keys(CITIES).filter((c) => !site.regions.length || site.regions.includes(CITIES[c].region));
+/** the cities this site builds /<city> pages for (none on a home-only site) */
+export const siteCities = (site: Site) => site.homeOnly ? []
+  : Object.keys(CITIES).filter((c) => !site.regions.length || site.regions.includes(CITIES[c].region));
 
 /** "[text](url)" links in an env line → HTML (everything else escaped) */
 export function linkify(line: string): string {

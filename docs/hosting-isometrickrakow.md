@@ -35,17 +35,19 @@ SITE_DESCRIPTION=Kraków as an isometric map, drawn from open data and painted w
 SITE_MAKERS=Made by [Piotr Kulpiński](https://kulpinski.dev)
 SITE_SOURCE=https://github.com/piotrkulpinski/isometricworld
 SITE_ICONS=/sites/isometric-krakow
-SITE_REDIRECTS=wieliczka:krakow
+SITE_HOME_ONLY=true
 WEB_CACHE=/Users/admin/Sites/isometricworld/data/web-isometrickrakow
 WEB_STATE=/Users/admin/Sites/isometricworld/data/web-state-isometrickrakow
 ```
 
-With these, `/` opens Kraków's map, `/krakow` is the only city page, and `/wieliczka` (any capitalisation) answers
-301 to `/krakow` with the query kept, so old `?at=lat,lon,km` links land on the same spot. The `krakow` region
-shares the Wieliczka region's camera and grid, so old `#@x,y,zoom` links open the same view too. The map footer reads
-"Made by Piotr Kulpiński · Built on Isometric World by Dmytro Krasun (GitHub)" after the data credits and
-"Painted with AI". The salt mine (its button, levels and plan credit) comes only with a region that exports a
-mine, so Kraków has none.
+With these, the site is one page: `/` is Kraków's map. `SITE_HOME_ONLY` builds no city pages, so `/krakow`,
+`/wieliczka` and every other path answer 404 with the "No such place" page. The site has no path redirects (only `www` and `http` to the apex).
+`?at=lat,lon,km` and `#@x,y,zoom` links work on `/`. The `krakow` region shares the Wieliczka region's camera and
+grid, so `#@` links copied from the earlier site open the same view. The canonical URL, `og:url`, the social card
+(`og/isometric-krakow.jpg`) and `sitemap.xml` (linked from `robots.txt`) all point at `https://isometrickrakow.com/`.
+The map footer reads "Made by Piotr Kulpiński · Built on Isometric World by Dmytro Krasun (GitHub)" after the data
+credits and "Painted with AI". The salt mine (its button, levels and plan credit) comes only with a region that
+exports a mine, so Kraków has none.
 
 Until 2026-11-26 the site served the `wieliczka` region (Kraków and Maciek Chmura's Wieliczka, copied from
 isometriccity.com with `npm run mirror`). Its files stay in the bucket under `regions/wieliczka/` and its state in
@@ -141,7 +143,7 @@ The ruleset `PUT` replaces the zone's dynamic redirect rules, which is fine on a
 curl -sI https://tiles.isometrickrakow.com/regions/krakow/data/world.json -H 'Origin: https://isometrickrakow.com' | grep -i 'http/\|access-control'
 curl -sI https://www.isometrickrakow.com/krakow?at=50.06,19.94,1 | grep -i 'http/\|location'
 curl -sI http://isometrickrakow.com/krakow?at=50.06,19.94,1 | grep -i 'http/\|location'
-curl -sI https://isometrickrakow.com/wieliczka?at=50.06,19.94,1 | grep -i 'http/\|location'
+curl -sI https://isometrickrakow.com/krakow | grep -i 'http/'      # 404
 ```
 
 ## Later updates
