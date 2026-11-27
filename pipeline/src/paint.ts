@@ -780,7 +780,7 @@ async function paintWindow(i: number, j: number) {
       console.warn(`  ${i}_${j}: the output is a copy of the input, not a painting`);
     }
     if (!existsSync(join(work, "out.png"))) {
-      const log = readFileSync(join(work, "codex.log"), "utf8").slice(-4000);
+      const log = readFileSync(join(work, "codex.log"), "utf8"); // the whole log: the limit error comes before Codex's final reply
       if (LIMIT.test(log)) {
         const wait = limitWait(log);
         resumeAt = Math.max(resumeAt, Date.now() + wait);
