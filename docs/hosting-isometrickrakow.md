@@ -81,8 +81,9 @@ First export on 2026-11-27: 68,267 files (1.8 GB), 4,350 rendered and 411 painte
 
 ## Publish
 
-The `wieliczka` region went live on 2026-11-26: 73,641 files uploaded and checked in 3,881 s, Worker version
-`7773c405-e9da-4307-a755-9e0de4ad37d8`.
+The `krakow` region went live on 2026-11-27: 68,267 files (1,784.5 MB) uploaded and checked in 1,744 s, then the
+one-page site was deployed as Worker version `a292fa53-c4bc-4dfe-a824-2d1696d14f6d`. Before it, the `wieliczka`
+region was live from 2026-11-26 (73,641 files, Worker version `7773c405-e9da-4307-a755-9e0de4ad37d8`).
 
 ```sh
 R2_ACCESS_KEY_ID="$(curl -s -H "Authorization: Bearer $(op read "$TOKEN_REF")" \
