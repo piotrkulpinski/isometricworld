@@ -830,6 +830,8 @@ async function paintWindow(i: number, j: number) {
         console.warn(`  ${i}_${j}: match ${r.score.toFixed(2)} < ${minMatch}, repainting`);
         continue;
       }
+      // below this it is another place, not a sloppy tracing: never kept, the window stays unpainted for a later run
+      if (structured && r.score < 0.25) { console.warn(`  ${i}_${j}: match ${r.score.toFixed(2)} after 3 attempts: not this place, left unpainted`); return; }
       const warp = structured && r.score > r.identity + 0.01;
       let note = "";
       if (local.groundChecks) {

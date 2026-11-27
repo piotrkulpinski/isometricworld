@@ -1,6 +1,7 @@
 /** One Codex CLI run (`codex exec`, ChatGPT login, no API key) in `cwd` with the given images attached; log in cwd/codex.log. */
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, symlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -16,10 +17,21 @@ export function codex(cwd: string, images: string[], prompt: string, opts: { mod
     const log = openSync(join(cwd, "codex.log"), "w");
     const codexModel = opts.model ?? process.env.CODEX_MODEL;
     const model = [...(codexModel ? ["-m", codexModel] : []), ...(opts.effort ? ["-c", `model_reasoning_effort="${opts.effort}"`] : [])];
+    // CODEX_ISOLATE=1: every call gets its own throwaway CODEX_HOME (links to the base home's auth.json and config.toml).
+    // Parallel calls sharing one home lost their attached images ("only 0 were available") or painted another
+    // call's place (Kraków, Nov 2026): the image tool reads "the last conversation images" from the shared history.
+    let home: string | undefined;
+    if (process.env.CODEX_ISOLATE) {
+      const base = process.env.CODEX_HOME || join(homedir(), ".codex");
+      home = join(cwd, ".codex-home");
+      rmSync(home, { recursive: true, force: true });
+      mkdirSync(home, { recursive: true });
+      for (const f of ["auth.json", "config.toml"]) if (existsSync(join(base, f))) symlinkSync(join(base, f), join(home, f));
+    }
     const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", ...model, "-C", cwd, ...images.flatMap((f) => ["-i", f]), "-"],
-      { stdio: ["pipe", log, log] });
+      { stdio: ["pipe", log, log], env: home ? { ...process.env, CODEX_HOME: home } : process.env });
     const timer = setTimeout(() => p.kill("SIGTERM"), opts.timeoutMs ?? 900_000);
-    p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });
+    p.on("close", () => { clearTimeout(timer); closeSync(log); if (home) rmSync(home, { recursive: true, force: true }); resolve(); });
     p.stdin!.end(prompt);
   });
 }
