@@ -110,6 +110,18 @@ This builds `web/dist` and runs `wrangler deploy --domain isometrickrakow.com --
 serves the static pages and the `/p/*` analytics proxy. Analytics stay off until a Pirsch key is set:
 `CLOUDFLARE_API_TOKEN="$(op read "$TOKEN_REF")" npx wrangler secret put PIRSCH_ACCESS_KEY --name isometrickrakow`.
 
+### Cached 404s for new bundles
+
+`web/public/_headers` gives `/_astro/*` a year-long `immutable` Cache-Control, and Cloudflare applies it to 404s
+too. A deploy that changes the page script renames its bundle. A browser that loads the page in the few seconds
+before the new bundle reaches its Cloudflare edge gets a 404 for it and keeps that 404 for a year. That browser then
+shows only the opening preview, with no map and no footer, until its cache is cleared. It happened to a test browser
+right after the 2026-11-27 deploy. Upstream (isometriccity.com) has the same window on every deploy.
+
+The fix (prepared 2026-11-27, not deployed yet): `wrangler.jsonc` runs the Worker first for `/_astro/*` too, and
+`worker/index.ts` returns a 404 there with `Cache-Control: no-store`. Bundles that exist keep the immutable header.
+It costs one Worker invocation per bundle request.
+
 ## Daily upload
 
 Piotr approved one standing job: once a day, upload what changed in the `krakow` region to `isometrickrakow-tiles`

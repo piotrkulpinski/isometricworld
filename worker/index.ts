@@ -1,5 +1,6 @@
 /**
- * The site's Worker. Static pages are served from assets (wrangler.jsonc); only /p/* runs here: a
+ * The site's Worker. Static pages are served from assets (wrangler.jsonc); /_astro/* runs here only to keep a
+ * missing bundle's 404 out of browser caches (see fetch), and /p/* is a
  * first-party proxy for Pirsch Analytics (https://docs.pirsch.io/advanced/cf-workers), so the script and
  * its requests stay on our domain and the access key stays server-side.
  *
@@ -21,7 +22,15 @@ export default {
 		if (path === EVENT && request.method === "POST") return event(request, env);
 		if (path === SESSION && request.method === "POST") return session(request, env);
 		if (path.startsWith("/p/")) return new Response(null, { status: 404 });
-		return env.ASSETS.fetch(request); // anything that reaches the Worker outside /p/* is a page
+		const asset = await env.ASSETS.fetch(request); // /_astro/* bundles (and anything else outside /p/*)
+		// _headers gives /_astro/* a year-long immutable Cache-Control, 404s included: a browser that asks for a new
+		// bundle in the seconds before a deploy reaches its edge would keep that 404 for a year (a page with no map)
+		if (asset.status === 404 && path.startsWith("/_astro/")) {
+			const r = new Response(asset.body, asset);
+			r.headers.set("Cache-Control", "no-store");
+			return r;
+		}
+		return asset;
 	},
 };
 
