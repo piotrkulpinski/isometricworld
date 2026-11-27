@@ -109,6 +109,44 @@ This builds `web/dist` and runs `wrangler deploy --domain isometrickrakow.com --
 serves the static pages and the `/p/*` analytics proxy. Analytics stay off until a Pirsch key is set:
 `CLOUDFLARE_API_TOKEN="$(op read "$TOKEN_REF")" npx wrangler secret put PIRSCH_ACCESS_KEY --name isometrickrakow`.
 
+## Daily upload
+
+Piotr approved one standing job: once a day, upload what changed in the `krakow` region to `isometrickrakow-tiles`
+under `regions/krakow/`. It never deploys the Worker: site changes still need his yes.
+
+`scripts/daily-publish-isometrickrakow.sh` exports `krakow` into `WEB_CACHE` (`data/web-isometrickrakow`) against
+`WEB_STATE` (`data/web-state-isometrickrakow`), publishes the changed files (`world.json` last), then checks that
+`https://tiles.isometrickrakow.com/regions/krakow/data/world.json` answers 200. It sets the bucket, origin, account,
+cache and state itself, so the checkout's `.env` does not matter. It reads the Cloudflare token with `op read`
+(60 s limit) when the upload starts and passes it only to that one command. It holds a lock
+(`data/.daily-publish-isometrickrakow.lock`), so two runs never overlap, and it skips the day when the data disk has
+less than 15 GiB free. Logs: `data/logs/daily-publish/<date>.log`. A failure writes a `FAILED:` line there and
+posts to Slack `#notifications` through the Mini's `@pawelek` bot. `--dry-run` exports and reports what a publish
+would upload without uploading.
+
+The LaunchAgent `com.kulpinski.isometrickrakow-daily-publish` (`scripts/launchd/`) runs it at 04:00 every day
+(the Mini's clock is Europe/Warsaw). It runs the script from the main checkout, `~/Sites/isometricworld`, not from a
+T3 worktree, because the Mini's cleanup job removes `node_modules` from idle worktrees.
+
+```sh
+# install (or reinstall after editing the plist)
+cp scripts/launchd/com.kulpinski.isometrickrakow-daily-publish.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kulpinski.isometrickrakow-daily-publish.plist
+
+# pause (stays installed, skips its runs) and resume
+launchctl disable gui/$(id -u)/com.kulpinski.isometrickrakow-daily-publish
+launchctl enable gui/$(id -u)/com.kulpinski.isometrickrakow-daily-publish
+
+# run now, and check
+launchctl kickstart gui/$(id -u)/com.kulpinski.isometrickrakow-daily-publish
+launchctl print gui/$(id -u)/com.kulpinski.isometrickrakow-daily-publish | grep -E 'state|last exit'
+tail -20 ~/Sites/isometricworld/data/logs/daily-publish/$(date +%F).log
+
+# remove
+launchctl bootout gui/$(id -u)/com.kulpinski.isometrickrakow-daily-publish
+rm ~/Library/LaunchAgents/com.kulpinski.isometrickrakow-daily-publish.plist
+```
+
 ## One-time Cloudflare setup
 
 All done on 2026-11-26. The Workers deploy token set the custom domain `tiles.isometrickrakow.com` on the bucket
