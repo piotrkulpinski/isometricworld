@@ -71,7 +71,8 @@ rails or lane markings across a bridge deck.
 - Image 3 is only for style. Do not copy its buildings, layout or architecture.
 {aerialRule}{facades}{continuation}Output: one square 1024x1024 image, no text, no labels, no border, no vignette.
 
-When done, copy the final PNG to {out} and reply only with that path.
+When done, copy the final PNG to {out} and reply only with that path. If the image tool fails or refuses, do not \
+create that file in any other way (never copy or edit the attached images): reply only FAILED.
 `;
 const PAINTED_STYLE = `Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
 clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
@@ -496,6 +497,15 @@ async function composeInput(i: number, j: number, file: string, heightFile: stri
   return edges;
 }
 
+/** Is `out` (nearly) the same picture as `input`? Mean channel difference below 2 at 256 px. */
+async function copiedInput(out: string, input: string) {
+  const px = (f: string) => sharp(f).removeAlpha().resize(256, 256, { fit: "fill" }).raw().toBuffer();
+  const [a, b] = await Promise.all([px(out), px(input)]);
+  let d = 0;
+  for (let k = 0; k < a.length; k++) d += Math.abs(a[k] - b[k]);
+  return d / a.length < 2;
+}
+
 /** Codex/ChatGPT usage or rate limit: every worker pauses until `resumeAt`, then retries. */
 let resumeAt = 0, backoff = 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -764,6 +774,11 @@ async function paintWindow(i: number, j: number) {
     const t0 = Date.now();
     if (BACKEND === "fal") await falPaint(work, prompt, `${i}_${j}`);
     else await codexWindow(work, prompt);
+    // under a usage limit Codex has "finished" by copying input.png to out.png: that is no painting
+    if (existsSync(join(work, "out.png")) && (await copiedInput(join(work, "out.png"), join(work, "input.png")))) {
+      renameSync(join(work, "out.png"), join(work, "out-copied-input.png"));
+      console.warn(`  ${i}_${j}: the output is a copy of the input, not a painting`);
+    }
     if (!existsSync(join(work, "out.png"))) {
       const log = readFileSync(join(work, "codex.log"), "utf8").slice(-4000);
       if (LIMIT.test(log)) {
