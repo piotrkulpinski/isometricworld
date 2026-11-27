@@ -775,6 +775,7 @@ async function paintWindow(i: number, j: number) {
       + (local.styleLocal ? STYLE_LOCAL_RULE(localN) : "") + (local.rules ?? ""));
   if (GUIDE) prompt = prompt.replace(/1\. input\.png:[^\n]*\n/, GUIDE_IMAGE);
   let best: { score: number; file: string; note: string } | null = null; // groundChecks: the least flawed attempt so far
+  let lostImages = 0;
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
     if (overBudget()) { console.warn(`  ${i}_${j}: paint budget of $${BUDGET} reached ($${spent.toFixed(2)} spent), skipped`); return; }
@@ -794,6 +795,13 @@ async function paintWindow(i: number, j: number) {
         resumeAt = Math.max(resumeAt, Date.now() + wait);
         console.warn(`  ${i}_${j}: Codex limit reached, pausing all workers until ${new Date(resumeAt).toLocaleTimeString()}`);
         attempt--; // a limit is not the window's fault: retry without using up an attempt
+        continue;
+      }
+      // the image tool lost the attached images (no image made, nothing billed): retry, without using up an attempt
+      if (/only 0 were available/.test(log) && ++lostImages <= 10) {
+        console.warn(`  ${i}_${j}: Codex lost the attached images, retrying (${lostImages})`);
+        await sleep(15_000);
+        attempt--;
         continue;
       }
     } else backoff = 0;
