@@ -800,7 +800,7 @@ async function paintWindow(i: number, j: number) {
       // the image tool lost the attached images (no image made, nothing billed): retry, without using up an attempt
       if (/only 0 were available/.test(log) && ++lostImages <= 10) {
         console.warn(`  ${i}_${j}: Codex lost the attached images, retrying (${lostImages})`);
-        await sleep(15_000);
+        await sleep(3_000);
         attempt--;
         continue;
       }
