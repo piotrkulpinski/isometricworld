@@ -36,6 +36,7 @@ SITE_MAKERS=Made by [Piotr Kulpiński](https://kulpinski.dev)
 SITE_SOURCE=https://github.com/piotrkulpinski/isometricworld
 SITE_ICONS=/sites/isometric-krakow
 SITE_HOME_ONLY=true
+SITE_LIVE_DATA=true
 WEB_CACHE=/Users/admin/Sites/isometricworld/data/web-isometrickrakow
 WEB_STATE=/Users/admin/Sites/isometricworld/data/web-state-isometrickrakow
 ```
