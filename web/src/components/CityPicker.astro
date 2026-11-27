@@ -59,7 +59,10 @@ const cards = [...served.map((slug) => [slug, CITIES[slug]] as const).map(([slug
   return {
     slug, title: c.title, country: region.country, href: `/${slug}`,
     image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
-    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
+    // a region missing from the tables gets its credits from its data: GUGiK's notice for "gugik", the AI label from its credits
+    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [],
+    sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? (region.sources === "gugik" ? [OSM, GUGIK, DEM] : [OSM, DEM]),
+    painted: PAINTED[c.region] ?? region.credits.some((t) => /painted with ai/i.test(t)),
   };
 }), ...(site.regions.length ? [] : EXTERNAL).map((c) => ({ ...c, external: true }))] as { href: string; external?: boolean; slug: string; title: string; country: string;
   image: string; lqip?: string; people: Link[]; sources: Link[]; painted: boolean }[];

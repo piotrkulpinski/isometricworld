@@ -41,8 +41,8 @@ WEB_STATE=/Users/admin/Sites/isometricworld/data/web-state-isometrickrakow
 ```
 
 With these, `/` opens Kraków's map, `/krakow` is the only city page, and `/wieliczka` (any capitalisation) answers
-301 to `/krakow` with the query kept, so old `?at=lat,lon,km` links land on the same spot. Old `#@x,y,zoom` links
-from the Wieliczka region carry its pixel coordinates and open somewhere else on Kraków's map. The map footer reads
+301 to `/krakow` with the query kept, so old `?at=lat,lon,km` links land on the same spot. The `krakow` region
+shares the Wieliczka region's camera and grid, so old `#@x,y,zoom` links open the same view too. The map footer reads
 "Made by Piotr Kulpiński · Built on Isometric World by Dmytro Krasun (GitHub)" after the data credits and
 "Painted with AI". The salt mine (its button, levels and plan credit) comes only with a region that exports a
 mine, so Kraków has none.
@@ -68,11 +68,14 @@ two R2 variables, about 5 hours for the first full upload).
 ## Export
 
 The `krakow` region has no published state in this bucket yet, so its first export with this `.env` builds the
-whole pyramid into `WEB_CACHE`. Later exports write only what changed.
+whole pyramid into `WEB_CACHE`. Later exports write only what changed. Export needs the region's borders
+(`data/raw/boundaries/krakow.json`, local only): make them once with `REGION=krakow npm -w pipeline run boundaries -- krakow`.
 
 ```sh
-npm run export -- krakow
+DATA_DIR=/Users/admin/Sites/isometricworld/data npm run export -- krakow   # from a worktree; drop DATA_DIR in the main checkout
 ```
+
+First export on 2026-11-27: 68,267 files (1.8 GB), 4,350 rendered and 411 painted tiles, no salt mine.
 
 ## Publish
 
