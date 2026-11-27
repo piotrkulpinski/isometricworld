@@ -14,7 +14,9 @@ import type { Clouds } from "./clouds.ts";
 import type { SearchItem } from "./search.ts";
 import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
+import { UPSTREAM, linkify, type Site } from "../../../pipeline/src/site.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
+declare const __SITE__: Site; // pipeline/src/site.ts from SITE_* in .env, injected by astro.config.mjs
 
 interface World {
   tile_size: number;
@@ -486,7 +488,7 @@ document.getElementById("credits")!.innerHTML = [
     : REGION === "zagreb" // Otvorena dozvola: source, date of its last change, link, change notice
       ? [`<a href="https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz">Grad Zagreb, ZG3D 2022</a> (7. 5. 2025.)`,
         `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]
-      : REGION === "wieliczka" // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
+      : REGIONS[REGION].sources === "gugik" // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
         ? [`Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`]
         : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
@@ -496,15 +498,18 @@ document.getElementById("credits")!.innerHTML = [
   // painted regions say so (their credits in places.ts carry the label for clips too)
   ...(REGIONS[REGION].credits.some((c) => /painted with ai/i.test(c)) ? ["Painted with AI"] : []),
   // the method to recreate the derived database (ODbL) and the code
-  `<a href="https://github.com/krasun/isometricworld">Source</a>`,
-  REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
+  `<a href="${__SITE__.source}">Source</a>`,
+  // a maker hosting their own map (SITE_MAKERS): their lines, and the project it is built on
+  ...(__SITE__.makers ? [...__SITE__.makers.split(" · ").map(linkify),
+    `Built on <a href="${UPSTREAM.url}">${UPSTREAM.name}</a> by <a href="${UPSTREAM.author.href}">${UPSTREAM.author.text}</a> (<a href="${UPSTREAM.source}">GitHub</a>)`]
+  : [REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
     ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
       ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
-      : REGION === "wieliczka" && document.body.dataset.city === "krakow" // Kraków, a city of the Wieliczka region, by Piotr Kulpiński
+      : document.body.dataset.city === "krakow" // Kraków (in the Wieliczka region, or its own) by Piotr Kulpiński
         ? `Made by <a href="https://kulpinski.dev">Piotr Kulpiński</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
         ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
-        : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+        : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`]),
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");

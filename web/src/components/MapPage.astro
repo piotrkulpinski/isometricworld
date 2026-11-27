@@ -3,6 +3,8 @@
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { HOSTING } from "../../../pipeline/src/hosting.ts";
+import { siteConfig } from "../../../pipeline/src/site.ts";
+import Icons from "./Icons.astro";
 declare const __WEB_CACHE__: string; // data/web/, injected by astro.config.mjs
 interface Props { city: string; home?: boolean }
 interface Preview { file: string; lqip: string }
@@ -25,20 +27,18 @@ async function loadWorld(): Promise<World> {
 const world = await loadWorld();
 const preload = world.files ? [world.files["tiles-map"], world.files.borders].filter(Boolean) : ["tiles.json", "borders.json"];
 const pv = world.previews?.[city];
-const title = home ? "Isometric World" : `${c.title} · Isometric World`;
-const description = home ? "An isometric city map from open data." : `${c.title}: an isometric city map from open data.`;
+const site = siteConfig();
+const title = home ? site.name : `${c.title} · ${site.name}`;
+const description = home ? (site.home ? site.description : "An isometric city map from open data.") : `${c.title}: an isometric city map from open data.`;
 // crawlers need absolute URLs: site comes from SITE_DOMAIN (astro.config.mjs)
-const site = Astro.site ?? Astro.url;
-const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, ogImage = new URL(`/og/${home ? "index" : city}.jpg`, site).href;
+const base = Astro.site ?? Astro.url;
+const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), base).href, ogImage = new URL(`/og/${home ? site.homeOg : city}.jpg`, base).href;
 ---
 
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<link rel="icon" href="/favicon.ico" sizes="48x48" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-		<link rel="manifest" href="/site.webmanifest" />
+		<Icons />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="theme-color" content="#0e0f12" />
 		<meta name="color-scheme" content="dark" />
@@ -49,7 +49,7 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 		<meta name="description" content={description} />
 		{/* social cards: web/public/og/<city>.jpg, made by pipeline/src/og.ts from the published tiles */}
 		<meta property="og:type" content="website" />
-		<meta property="og:site_name" content="Isometric World" />
+		<meta property="og:site_name" content={site.name} />
 		<meta property="og:title" content={title} />
 		<meta property="og:description" content={description} />
 		<link rel="canonical" href={pageUrl} />
@@ -57,7 +57,7 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 		<meta property="og:image" content={ogImage} />
 		<meta property="og:image:width" content="1200" />
 		<meta property="og:image:height" content="630" />
-		<meta property="og:image:alt" content={home ? "Isometric World, an isometric city map from open data" : `${c.title}, isometric city map`} />
+		<meta property="og:image:alt" content={home ? `${site.name}, an isometric city map from open data` : `${c.title}, isometric city map`} />
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:title" content={title} />
 		<meta name="twitter:description" content={description} />

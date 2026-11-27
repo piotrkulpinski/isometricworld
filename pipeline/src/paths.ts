@@ -4,15 +4,15 @@ import { fileURLToPath } from "node:url";
 
 export const PIPELINE = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const ROOT = join(PIPELINE, "..");
+// optional local settings (.env at the repo root, never committed; see .env.example), before the paths read them
+if (existsSync(join(ROOT, ".env"))) process.loadEnvFile(join(ROOT, ".env"));
 export const DATA = process.env.DATA_DIR || join(ROOT, "data"); // override: test runs against a scratch copy
 export const RAW = join(DATA, "raw");
 export const DERIVED = join(DATA, "derived");
 /** Built map data waiting to be published (served by the dev server over production); emptied by publish. */
 export const WEB_CACHE = process.env.WEB_CACHE || join(DATA, "web"); // override: test exports elsewhere
 /** What is published per region: tile sources + content hashes (lets export rebuild only changes). */
-export const WEB_STATE = join(DATA, "web-state");
-// optional local settings (.env at the repo root, never committed; see .env.example)
-if (existsSync(join(ROOT, ".env"))) process.loadEnvFile(join(ROOT, ".env"));
+export const WEB_STATE = process.env.WEB_STATE || join(DATA, "web-state"); // override: a second bucket keeps its own state
 /** Chromium/Chrome for the renderer and the test scripts, and its launch flags (GPU backend etc.). */
 export const CHROME = process.env.CHROME_PATH || "/usr/bin/chromium";
 /**

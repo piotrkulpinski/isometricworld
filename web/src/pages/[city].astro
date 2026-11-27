@@ -1,10 +1,10 @@
 ---
 /** /<city-slug>, e.g. /tel-aviv-yafo: the city's region, opened centred on the city. */
 import MapPage from "../components/MapPage.astro";
-import { CITIES } from "../../../pipeline/src/places.ts";
+import { siteCities, siteConfig } from "../../../pipeline/src/site.ts";
 
 export function getStaticPaths() {
-  return Object.keys(CITIES).map((city) => ({ params: { city }, props: { city } }));
+  return siteCities(siteConfig()).map((city) => ({ params: { city }, props: { city } }));
 }
 const { city } = Astro.props;
 ---
