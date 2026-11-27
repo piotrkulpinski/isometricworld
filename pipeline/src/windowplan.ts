@@ -106,8 +106,9 @@ export function regionWindows(area: string): Map<string, WindowInfo> {
   const region = openArea(area).region;
   if (!cache.has(region)) {
     const names = Object.keys(AREAS).filter((a) => AREAS[a].region === region && !AREAS[a].mine && existsSync(join(DERIVED, a, "manifest.json")));
-    const stamp = names.map((a) => [join(DERIVED, a, "scene"), join(DERIVED, a, "manifest.json")].map((f) => existsSync(f) ? statSync(f).mtimeMs : 0).join("/")).join(" ");
+    let stamp = names.map((a) => [join(DERIVED, a, "scene"), join(DERIVED, a, "manifest.json")].map((f) => existsSync(f) ? statSync(f).mtimeMs : 0).join("/")).join(" ");
     const file = join(DATA, "windowplan", `${region}.json`);
+    stamp += ` outline ${JSON.stringify(REGIONS[region].outline ?? null)}`; // a new outline (westOf) changes "inside"
     if (existsSync(file)) {
       const saved = readJson(file);
       if (saved.stamp === stamp && saved.minM2 === MIN_M2 && saved.version === VERSION) { cache.set(region, new Map(Object.entries(saved.windows))); openArea(area); return cache.get(region)!; }

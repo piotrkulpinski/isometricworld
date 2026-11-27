@@ -18,7 +18,8 @@ export function outlineLatLon(region = activeRegion()): Pt[][] | null {
   if (!o) return null;
   if (!R.osmExtract) throw new Error(`${region}: outline needs osmExtract`);
   const rings: Pt[][] = [];
-  for (const id of o.relations) rings.push(...relationRings(R.osmExtract, id).map((r) => o.clip ? clipRing(r, o.clip) : r));
+  for (const id of o.relations) rings.push(...relationRings(R.osmExtract, id).map((r) => o.clip ? clipRing(r, o.clip) : r)
+    .map((r) => o.westOf ? clipWestOf(r, o.westOf) : r));
   for (const r of rings) if (r.length > 1 && r[0][0] === r.at(-1)![0] && r[0][1] === r.at(-1)![1]) r.pop(); // GeoJSON repeats the first vertex
   for (let i = rings.length - 1; i >= 0; i--) if (rings[i].length < 3) rings.splice(i, 1); // wholly outside the clip
   for (const [s, w, n, e] of o.add ?? []) rings.push([[s, w], [s, e], [n, e], [n, w]]);
@@ -40,6 +41,46 @@ function clipRing(ring: Pt[], [s, w, n, e]: [number, number, number, number]): P
         out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
       }
     }
+  }
+  return out;
+}
+
+/** The line's longitude at a latitude (linear between its points, constant beyond its ends). */
+function lonAt(line: Pt[], lat: number) {
+  if (lat <= line[0][0]) return line[0][1];
+  if (lat >= line.at(-1)![0]) return line.at(-1)![1];
+  for (let k = 1; k < line.length; k++)
+    if (lat <= line[k][0]) { const [a, b] = [line[k - 1], line[k]], t = (lat - a[0]) / (b[0] - a[0] || 1); return a[1] + (b[1] - a[1]) * t; }
+  return line.at(-1)![1];
+}
+
+/**
+ * A [lat, lon] ring cut to what lies west of `line` (south to north; outline.westOf). Sutherland–Hodgman against the
+ * line as one boundary: crossings found by bisection, and between leaving and re-entering, the line's own points
+ * are added so the cut edge follows it.
+ */
+export function clipWestOf(ring: Pt[], line: Pt[]): Pt[] {
+  const side = (p: Pt) => p[1] - lonAt(line, p[0]); // < 0 west (kept)
+  const cross = (a: Pt, b: Pt): Pt => {
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2, p: Pt = [a[0] + (b[0] - a[0]) * m, a[1] + (b[1] - a[1]) * m]; if ((side(p) < 0) === (side(a) < 0)) lo = m; else hi = m; }
+    return [a[0] + (b[0] - a[0]) * lo, a[1] + (b[1] - a[1]) * lo];
+  };
+  const out: Pt[] = [];
+  let exit: Pt | null = null;
+  const along = (from: Pt, to: Pt) => { // the line's points between two crossings, in walking order
+    const pts = line.filter((p) => (p[0] - from[0]) * (p[0] - to[0]) < 0);
+    return from[0] < to[0] ? pts : pts.reverse();
+  };
+  // start at a kept vertex so every exit is followed by its entry
+  const start = ring.findIndex((p) => side(p) < 0);
+  if (start < 0) return [];
+  for (let n = 0; n < ring.length; n++) {
+    const a = ring[(start + n) % ring.length], b = ring[(start + n + 1) % ring.length];
+    const ain = side(a) < 0, bin = side(b) < 0;
+    if (ain) out.push(a);
+    if (ain && !bin) { exit = cross(a, b); out.push(exit); }
+    if (!ain && bin) { const entry = cross(a, b); if (exit) out.push(...along(exit, entry)); out.push(entry); exit = null; }
   }
   return out;
 }

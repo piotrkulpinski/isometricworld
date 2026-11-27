@@ -139,6 +139,11 @@ export interface Region {
     add?: Array<[number, number, number, number]>;
     /** Box [s, w, n, e] the relations are cut to (a mountain beyond the height pass's range stays out). */
     clip?: [number, number, number, number];
+    /**
+     * Keep only what lies west of this line, [lat, lon] points ordered south to north (a road: Kraków's S7 eastern
+     * bypass); beyond its ends it runs on due north and due south. The outline's cut edge follows the line.
+     */
+    westOf?: Array<[number, number]>;
   };
 }
 
