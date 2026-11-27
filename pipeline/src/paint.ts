@@ -71,7 +71,8 @@ rails or lane markings across a bridge deck.
 - Image 3 is only for style. Do not copy its buildings, layout or architecture.
 {aerialRule}{facades}{continuation}Output: one square 1024x1024 image, no text, no labels, no border, no vignette.
 
-When done, copy the final PNG to {out} and reply only with that path.
+When done, copy the final PNG to {out} and reply only with that path. If the image tool fails or refuses, do not \
+create that file in any other way (never copy or edit the attached images): reply only FAILED.
 `;
 const PAINTED_STYLE = `Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
 clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
@@ -113,7 +114,13 @@ interface Local {
    * least flawed: m² of asphalt or of cars, stalls and shopfronts on pedestrian ground (OSM plazas, paving and
    * car-free streets), and the share of buildings painted brick or tile red where the render isn't red.
    */
-  groundChecks?: { pedAsphalt: number; pedObjects: number; redWalls: number };
+  groundChecks?: {
+    pedAsphalt: number; pedObjects: number; redWalls: number;
+    /** red walls count only from this many red cells (~m²): a few red roofs in a window of fields are no flaw */
+    redMinCells?: number;
+    /** attempt 2 is kept up to this score (1 = the limits above): the third image only for clear failures */
+    marginal?: number;
+  };
   /**
    * The render's cast-shadow colour (style preset castShadow): divided out of shadowed pedestrian ground in the
    * painter's input, so a shadowed pedestrian street no longer looks like an asphalt road to the model.
@@ -229,7 +236,9 @@ roofs stay grey, red tile stays red, green copper stays green.
 - Grass, lawns, parks and tree crowns keep the fresh, cool green of image 1: a clear mid green, never yellow-green, \
 olive or late-summer brown.
 `,
-    groundChecks: { pedAsphalt: 120, pedObjects: 40, redWalls: 0.035 },
+    // red 6 % (was 3.5 %): flagged windows at 3.5–6 % were suburbs with a few grey roofs painted red, or a window of
+    // fields where one house made the share; invented red ground and brick-turned plaster run 13–24 %
+    groundChecks: { pedAsphalt: 120, pedObjects: 40, redWalls: 0.06, redMinCells: 150, marginal: 1.5 },
     liftShadows: [0.60, 0.64, 0.80], // styles.ts poland castShadow
     matchVegetation: true,
   },
@@ -494,6 +503,15 @@ async function composeInput(i: number, j: number, file: string, heightFile: stri
   }
   await sharp(await img.png().toBuffer()).composite(comps).png().toFile(file);
   return edges;
+}
+
+/** Is `out` (nearly) the same picture as `input`? Mean channel difference below 2 at 256 px. */
+async function copiedInput(out: string, input: string) {
+  const px = (f: string) => sharp(f).removeAlpha().resize(256, 256, { fit: "fill" }).raw().toBuffer();
+  const [a, b] = await Promise.all([px(out), px(input)]);
+  let d = 0;
+  for (let k = 0; k < a.length; k++) d += Math.abs(a[k] - b[k]);
+  return d / a.length < 2;
 }
 
 /** Codex/ChatGPT usage or rate limit: every worker pauses until `resumeAt`, then retries. */
@@ -764,8 +782,13 @@ async function paintWindow(i: number, j: number) {
     const t0 = Date.now();
     if (BACKEND === "fal") await falPaint(work, prompt, `${i}_${j}`);
     else await codexWindow(work, prompt);
+    // under a usage limit Codex has "finished" by copying input.png to out.png: that is no painting
+    if (existsSync(join(work, "out.png")) && (await copiedInput(join(work, "out.png"), join(work, "input.png")))) {
+      renameSync(join(work, "out.png"), join(work, "out-copied-input.png"));
+      console.warn(`  ${i}_${j}: the output is a copy of the input, not a painting`);
+    }
     if (!existsSync(join(work, "out.png"))) {
-      const log = readFileSync(join(work, "codex.log"), "utf8").slice(-4000);
+      const log = readFileSync(join(work, "codex.log"), "utf8"); // the whole log: the limit error comes before Codex's final reply
       if (LIMIT.test(log)) {
         const wait = limitWait(log);
         resumeAt = Math.max(resumeAt, Date.now() + wait);
@@ -805,13 +828,16 @@ async function paintWindow(i: number, j: number) {
         const reg = join(work, "registered.png"), g = local.groundChecks;
         await applyRegistration(join(work, "out.png"), reg, warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });
         const { flaws: f } = await windowFlaws(await groundContext(), i, j, reg);
-        const score = Math.max(f.pedAsphaltCells! / g.pedAsphalt, f.pedObjectCells! / g.pedObjects, f.redWalls / g.redWalls);
+        const red = f.redWalls * f.walls >= (g.redMinCells ?? 0) ? f.redWalls / g.redWalls : 0;
+        const score = Math.max(f.pedAsphaltCells! / g.pedAsphalt, f.pedObjectCells! / g.pedObjects, red);
+        const limit = attempt === 2 && g.marginal ? g.marginal : 1; // a marginal second attempt is kept
         note = ` ground: ${f.pedAsphaltCells} m² asphalt, ${f.pedObjectCells} m² objects on pedestrian ground, ${(f.redWalls * 100).toFixed(1)} % red`;
         writeFileSync(join(work, "ground.json"), JSON.stringify({ attempt, score, ...f }));
         if (score > 1 && (!best || score < best.score)) { best = { score, file: join(work, "best.png"), note }; copyFileSync(reg, best.file); }
-        if (score > 1 && attempt < 3) { console.warn(`  ${i}_${j}: breaks the ground map (${note.trim()}), repainting`); continue; }
-        if (score > 1 && best && best.score < score) { copyFileSync(best.file, reg); note = best.note; }
-        if (score > 1) console.warn(`  ${i}_${j}: still breaks the ground map after 3 attempts, kept the least flawed`);
+        if (score > limit && attempt < 3) { console.warn(`  ${i}_${j}: breaks the ground map (${note.trim()}), repainting`); continue; }
+        if (score > 1 && score <= limit) console.warn(`  ${i}_${j}: marginal ground flaws on attempt 2 (${note.trim()}), kept`);
+        if (score > limit && best && best.score < score) { copyFileSync(best.file, reg); note = best.note; }
+        if (score > limit) console.warn(`  ${i}_${j}: still breaks the ground map after 3 attempts, kept the least flawed`);
         await writeAtomic(sharp(reg).png(), winFile(i, j));
         rmSync(reg, { force: true }); rmSync(join(work, "best.png"), { force: true });
       } else await applyRegistration(join(work, "out.png"), winFile(i, j), warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });

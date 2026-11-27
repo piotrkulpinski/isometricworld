@@ -1,0 +1,8 @@
+EDIT image 1, the painted map at the foot of Wawel Hill in Kraków (the Vistula on the left, the castle's brick walls and buildings on the right), in EXACTLY its own style and the style of image 3: crisp clean isometric illustration, fine detail, soft even daylight, light ambient occlusion, no long shadows, no photographic noise.
+
+ADD ONLY ONE SMALL THING: the Wawel Dragon statue (Smok Wawelski, Bronisław Chromy, 1972), standing exactly at the centre of image 1, at about (768, 512) px, ON THE PALE STONE PAVING that is already there (the paved plaza by the cave exit at the foot of the castle wall). The photos (images 4 onwards) show what it looks like; they say nothing about position or size.
+- SIZE: small. The statue with its rock is about 36 px tall in image 1 and about 30 px wide: smaller than the nearby trees, far smaller than any building.
+- The rock: one rough pale grey-white limestone boulder, set directly on the paving.
+- The dragon on top, as a clear readable silhouette: a long body, a long tail curling down over the rock, wings spread wide to both sides, a long neck raised high with the head(s) up, standing on clawed legs. Bronze with a LIGHT green-grey patina (sage green and silver-grey highlights), so it stands out clearly against the pale paving and the green lawns. No fire.
+- A small soft contact shadow on the paving to the lower right.
+Everything else stays EXACTLY as in image 1, pixel for pixel: the paving under and around the statue stays paving (no grass, no new paths), every path, wall, lawn, tree, lamp and building keeps its exact shape and place. Same camera and scale as image 1. No text, labels, signs or people.

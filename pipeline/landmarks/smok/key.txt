@@ -1,0 +1,3 @@
+This is a map at the foot of Wawel Hill in Kraków with a small bronze dragon statue on a pale rock at the centre of the image.
+- KEEP, pixel for pixel exactly as they are: only the dragon statue, its pale rock and its small contact shadow directly under it.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the paving around the rock, the river, paths, lawns, trees, walls and every building.
