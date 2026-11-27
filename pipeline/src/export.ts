@@ -44,7 +44,7 @@ import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSy
 import { join, relative, resolve } from "node:path";
 import sharp from "sharp";
 import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
-import { outlineEdgeDistance, outlinePixels } from "./outline.ts";
+import { outlineEdgeDistance, outlinePixels, clipWestOf } from "./outline.ts";
 import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuHeight, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { DATA, DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
@@ -823,7 +823,9 @@ async function exportBorders(heights: Heights) {
       .filter((m: any) => m.type === "way" && m.role === "outer" && m.geometry)
       .map((m: any) => m.geometry.map((p: any) => [p.lat, p.lon]));
     const out = [];
-    for (const ring of stitch(ways)) {
+    // a region cut along a road (outline.westOf) draws its borders cut there too: the line follows the map's edge
+    const cut = REGIONS[activeRegion()].outline?.westOf;
+    for (const ring of stitch(ways).map((r) => cut ? clipWestOf(r, cut) : r).filter((r) => r.length > 2)) {
       const pts: Array<[number, number]> = [];
       for (const [lat, lon] of ring) {
         const { x, y } = await onGround(heights, lat, lon);
@@ -1416,6 +1418,14 @@ async function main() {
   const photo = new Map<Key, string>(), art = new Map<Key, string>(), cut = new Map<Key, string>(); // cut: cutout.ts landmarks
   const attributions = new Set<string>();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  // a region cut along a road (outline.westOf): art tiles wholly beyond its outline are left out (not exported,
+  // indexed or uploaded), so the map ends at the cut instead of carrying blank faded tiles
+  const cutAway = (tx: number, ty: number) => {
+    if (!REGIONS[activeRegion()].outline?.westOf) return false;
+    const T = CAMERA.tile;
+    for (let j = 0; j <= 16; j++) for (let i = 0; i <= 16; i++) if (outlineEdgeDistance([tx * T + (i * T) / 16, ty * T + (j * T) / 16], 1) > 0) return false;
+    return true;
+  };
   for (const a of areas) {
     const dir = join(DERIVED, a);
     const m = readJson(join(dir, "manifest.json"));
@@ -1424,6 +1434,7 @@ async function main() {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
+        if (cutAway(tx, ty)) continue;
         const d = insideDistance([(tx + 0.5) * CAMERA.tile, (ty + 0.5) * CAMERA.tile], outlines[areas.indexOf(a)]);
         if (d < (depth.get(`${layer}:${tx}_${ty}`) ?? -1)) continue;
         depth.set(`${layer}:${tx}_${ty}`, d);
