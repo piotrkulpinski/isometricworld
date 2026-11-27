@@ -27,6 +27,12 @@ import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 import { codex } from "./codex.ts";
 import { lowDisk } from "./diskguard.ts";
+import { REGIONS } from "./places.ts";
+import { regionWindows } from "./windowplan.ts";
+/** --min-buildings: a window with this many buildings (≥ 40 m² each) is painted whatever its share (a hamlet's edge). */
+const MIN_BUILDINGS_N = 10;
+/** --min-buildings: a window with this share of tree crowns is painted too (woods and parks; only fields and water stay styled). */
+const MIN_TREES = 0.1;
 import { auditContext, PED, windowClasses, windowFlaws } from "./paintaudit.ts";
 import { matchedWindow, VegetationCache } from "./vegetation.ts";
 
@@ -332,6 +338,14 @@ const { values: args, positionals } = parseArgs({
     // extra reference photos, comma-separated (public domain / CC0 only: their pixels reach the painting): what the
     // objects of this place look like (e.g. fairground rides), never where they stand
     ref: { type: "string" },
+    // only windows that touch the region's outline (places.ts outline; a grid region's city boundary)
+    outline: { type: "boolean", default: false },
+    // skip unpainted windows whose building footprint share (windowplan.ts) is below this, that hold fewer than
+    // MIN_BUILDINGS_N buildings and less than MIN_TREES tree cover: open fields and water keep the styled render, faded into the painted
+    // neighbours across the overlap (Kraków: 0.02)
+    "min-buildings": { type: "string" },
+    // seam previews (with --tag and --assemble): treat these windows as skipped, e.g. "-17_-29,-22_-33"
+    skip: { type: "string" },
   },
 });
 const GUIDE = args.guide ? { file: args.guide, box: args["guide-frame"]!.split(",").map(Number) } : null;
@@ -349,7 +363,7 @@ const areaName = positionals[0] ?? "tlv-core";
 const base = join(DERIVED, areaName);
 const manifest = readJson(join(base, "manifest.json"));
 const AREA = openArea(areaName), title = AREA.title;
-const local = LOCAL[AREA.region];
+const local = LOCAL[AREA.region] ?? LOCAL[REGIONS[AREA.region].gridOf ?? ""];
 if (!local) throw new Error(`paint: no prompt for region ${AREA.region} (LOCAL in paint.ts)`);
 const OLDER = args.older ? new Date(args.older).getTime() : 0;
 const mtime = (f: string) => (existsSync(f) ? statSync(f).mtimeMs : 0);
@@ -688,7 +702,7 @@ async function dropDarkWindows(wins: Array<[number, number]>) {
 const MAX_USES = 12;
 
 async function facadeNotes(i: number, j: number) {
-  const here = FACADES.filter((f) => f.region === AREA.region);
+  const here = FACADES.filter((f) => f.region === AREA.region || f.region === REGIONS[AREA.region].gridOf);
   const pois = AREA.region === "israel-center" ? [] : await areaPois(areaName, AREA);
   if (!here.length && !pois.length) return "";
   const ground = await windowGround(i * STRIDE, j * STRIDE);
@@ -1069,6 +1083,30 @@ async function assemble(all = false, only?: Set<string>) {
     return weightCache.get(key)!;
   };
 
+  /**
+   * Painted share of each pixel of tile (tx,ty) near windows skipped for good (SKIP): a distance field to the nearest
+   * skipped window, eased over SKIP_FEATHER px, so the painting fades into the render with rounded corners and no
+   * window edges in it. Null when no skipped window is that close.
+   */
+  const SKIP_FEATHER = 192;
+  const smooth = (t: number) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
+  const skipFade = (tx: number, ty: number) => {
+    const x0 = tx * T - SKIP_FEATHER, y0 = ty * T - SKIP_FEATHER, x1 = (tx + 1) * T + SKIP_FEATHER, y1 = (ty + 1) * T + SKIP_FEATHER;
+    const rects: Array<[number, number, number, number]> = [];
+    for (let j = Math.floor((y0 - WIN) / STRIDE) + 1; j * STRIDE < y1; j++)
+      for (let i = Math.floor((x0 - WIN) / STRIDE) + 1; i * STRIDE < x1; i++)
+        if (SKIP.has(`${i}_${j}`)) rects.push([i * STRIDE, j * STRIDE, i * STRIDE + WIN, j * STRIDE + WIN]);
+    if (!rects.length) return null;
+    const f = new Float32Array(T * T);
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const gx = tx * T + x + 0.5, gy = ty * T + y + 0.5;
+      let d = Infinity;
+      for (const [a, b, c, e] of rects) d = Math.min(d, Math.hypot(Math.max(a - gx, 0, gx - c), Math.max(b - gy, 0, gy - e)));
+      f[y * T + x] = smooth(d / SKIP_FEATHER);
+    }
+    return f;
+  };
+
   mkdirSync(join(base, `paint${SUFFIX}`), { recursive: true });
   let written = 0, withdrawn: string | undefined;
   // tile -> the windows a partial tile was assembled from (a full tile uses all that cover it: not listed)
@@ -1103,6 +1141,8 @@ async function assemble(all = false, only?: Set<string>) {
       && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))
       && !(partial && existsSync(renderFile(tx, ty)) && mtime(renderFile(tx, ty)) > mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
+    // painted share per pixel near windows skipped for good (the render shows the rest)
+    const fade = skipFade(tx, ty);
     for (const [i, j] of have) {
       const px = await windowPixels(i, j), ww = await windowWeights(i, j);
       const ox = i * STRIDE - tx * T, oy = j * STRIDE - ty * T;
@@ -1119,11 +1159,13 @@ async function assemble(all = false, only?: Set<string>) {
     }
     const out = Buffer.alloc(T * T * 3);
     // seam cuts end hard at a patch edge: there the render only fills where no window paints
-    const render = partial && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
+    const render = (partial || fade) && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
     for (let d = 0; d < T * T; d++) {
       const w = wsum[d];
       for (let c = 0; c < 3; c++)
         out[d * 3 + c] = render && w < 1e-3 ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
+      if (render && fade && w >= 1e-3 && fade[d] < 1)
+        for (let c = 0; c < 3; c++) out[d * 3 + c] = Math.round(out[d * 3 + c] * fade[d] + render[d * 3 + c] * (1 - fade[d]));
     }
     await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`));
     if (partial) partialTiles[k] = used; else delete partialTiles[k];
@@ -1134,6 +1176,9 @@ async function assemble(all = false, only?: Set<string>) {
   vegCache?.save();
   console.log(`  assembled ${written} art tiles`);
 }
+
+/** Windows left unpainted for good (--outline, --min-buildings): painted neighbours fade into the render towards them. */
+let SKIP = new Set<string>();
 
 /** Set when free disk space ran out: no new window starts, the run ends after the ones in flight (exit code 3). */
 let diskStop: string | null = null;
@@ -1152,6 +1197,15 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
 
 async function main() {
   let wins = windows();
+  for (const k of args.skip?.split(",") ?? []) SKIP.add(k.trim());
+  if (args.outline || args["min-buildings"]) {
+    const info = regionWindows(areaName), min = Number(args["min-buildings"] ?? 0);
+    const painted = (k: string) => existsSync(join(winDir, `${k}.png`)) || SIBLINGS.some((d) => existsSync(join(d, "windows", `${k}.png`)));
+    for (const [k, w] of info) if (((args.outline && !w.inside) || (w.share < min && w.buildings < MIN_BUILDINGS_N && w.trees < MIN_TREES)) && !painted(k)) SKIP.add(k);
+    const before = wins.length;
+    wins = wins.filter(([i, j]) => !SKIP.has(`${i}_${j}`));
+    console.log(`  ${before - wins.length} of ${before} windows skipped (${args.outline ? "outside the outline, " : ""}building share < ${(min * 100).toFixed(1)} %)`);
+  }
   if (args.near) {
     const [lat, lon] = args.near.split(",").map(Number);
     const [x, y] = await groundPixel(join(base, "height"), lat, lon);
