@@ -25,3 +25,7 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   The first overview came back zoomed out (match 0.03) and was dropped; the second matched 0.46. No edits. Key with
   `--cleanup 24`: this overview redrew its surroundings slightly, and the full clean-up mask covered 85 % of the frame.
   WISŁA and 1906 sit on the south-east stand, whose seats face away from the camera, so they are not painted.
+- `smok` (krakow-test, the Wawel Dragon statue, OSM node 278057698): frame -16441,-33268,1536,1024, `--base paint`, refs
+  `side-1.jpg`, `side-2.jpg` from `data/raw/photos/smok/` (CC BY, see ATTRIBUTION.md). Second version (v1 in
+  landmark-smok/v1/ was too small and dark): 1.5× true scale so the silhouette reads, on the existing paving. Key with
+  `--cleanup 0`: the overview redrew the paths, and only the statue, its rock and its shadow (0.1 % of the frame) come in.
