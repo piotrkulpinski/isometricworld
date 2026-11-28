@@ -27,8 +27,6 @@ export OP_SERVICE_ACCOUNT_TOKEN=${OP_SERVICE_ACCOUNT_TOKEN:-$(cat $HOME/.config/
 export DATA_DIR=$DATA TILES_ORIGIN=https://tiles.isometrickrakow.com TILES_BUCKET=isometrickrakow-tiles \
   CLOUDFLARE_ACCOUNT_ID=$ACCOUNT WEB_CACHE=$DATA/web-isometrickrakow WEB_STATE=$DATA/web-state-isometrickrakow
 
-mkdir -p $LOGDIR
-exec >>$LOG 2>&1
 log() { print -r -- "$(date '+%F %T') $*"; }
 
 alert() { # failure line in the log, and a post to #notifications when the Mini's Slack token is there
@@ -38,10 +36,24 @@ alert() { # failure line in the log, and a post to #notifications when the Mini'
     node $slack notifications --text "isometrickrakow.com daily upload failed: $1 (log: $LOG)" >/dev/null) || true
 }
 
+# the data disk (/Volumes/Storage) must be writable: macOS privacy settings can block a LaunchAgent from it
+if ! { mkdir -p $LOGDIR && : >>$LOG; } 2>/dev/null; then
+  LOG=$HOME/Library/Logs/isometrickrakow-daily-publish.log
+  exec >>$LOG 2>&1
+  alert "cannot write to $DATA (an external disk: give the job's shell access in System Settings, Privacy & Security)"
+  exit 1
+fi
+exec >>$LOG 2>&1
+
 # `op read` with a 60 s limit: it can hang (inside a LaunchAgent on the Mini, for one); SIGALRM ends it (exit 142)
 op_read() { perl -e 'alarm 60; exec @ARGV' op read "$TOKEN_REF"; }
 
-if ! mkdir $LOCK 2>/dev/null; then log "skipped: another run holds $LOCK"; exit 0; fi
+if ! mkdir $LOCK 2>/dev/null; then
+  if [[ ! -d $LOCK ]]; then alert "cannot create the lock $LOCK"; exit 1; fi
+  # a run killed without its exit trap leaves the lock behind: older than 6 h is stale, say so instead of skipping forever
+  if [[ -n $(find $LOCK -maxdepth 0 -mmin +360 2>/dev/null) ]]; then alert "stale lock $LOCK (over 6 h old): remove it if no run is going"; exit 1; fi
+  log "skipped: another run holds $LOCK"; exit 0
+fi
 trap 'rmdir $LOCK 2>/dev/null' EXIT
 
 free=$(df -g $DATA | awk 'NR==2 {print $4}')

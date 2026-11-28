@@ -36,6 +36,7 @@ SITE_MAKERS=Made by [Piotr Kulpiński](https://kulpinski.dev)
 SITE_SOURCE=https://github.com/piotrkulpinski/isometricworld
 SITE_ICONS=/sites/isometric-krakow
 SITE_HOME_ONLY=true
+SITE_LIVE_DATA=true
 WEB_CACHE=/Users/admin/Sites/isometricworld/data/web-isometrickrakow
 WEB_STATE=/Users/admin/Sites/isometricworld/data/web-state-isometrickrakow
 ```
@@ -109,6 +110,18 @@ This builds `web/dist` and runs `wrangler deploy --domain isometrickrakow.com --
 serves the static pages and the `/p/*` analytics proxy. Analytics stay off until a Pirsch key is set:
 `CLOUDFLARE_API_TOKEN="$(op read "$TOKEN_REF")" npx wrangler secret put PIRSCH_ACCESS_KEY --name isometrickrakow`.
 
+### Cached 404s for new bundles
+
+`web/public/_headers` gives `/_astro/*` a year-long `immutable` Cache-Control, and Cloudflare applies it to 404s
+too. A deploy that changes the page script renames its bundle. A browser that loads the page in the few seconds
+before the new bundle reaches its Cloudflare edge gets a 404 for it and keeps that 404 for a year. That browser then
+shows only the opening preview, with no map and no footer, until its cache is cleared. It happened to a test browser
+right after the 2026-11-27 deploy. Upstream (isometriccity.com) has the same window on every deploy.
+
+The fix (prepared 2026-11-27, not deployed yet): `wrangler.jsonc` runs the Worker first for `/_astro/*` too, and
+`worker/index.ts` returns a 404 there with `Cache-Control: no-store`. Bundles that exist keep the immutable header.
+It costs one Worker invocation per bundle request.
+
 ## Daily upload
 
 Piotr approved one standing job: once a day, upload what changed in the `krakow` region to `isometrickrakow-tiles`
@@ -126,7 +139,12 @@ would upload without uploading.
 
 The LaunchAgent `com.kulpinski.isometrickrakow-daily-publish` (`scripts/launchd/`) runs it at 04:00 every day
 (the Mini's clock is Europe/Warsaw). It runs the script from the main checkout, `~/Sites/isometricworld`, not from a
-T3 worktree, because the Mini's cleanup job removes `node_modules` from idle worktrees.
+T3 worktree, because the Mini's cleanup job removes `node_modules` from idle worktrees. It runs the script through
+`ssh localhost`: macOS privacy settings keep GUI LaunchAgents (`zsh` and `bash` alike) out of `/Volumes/Storage`,
+where `data/` lives, while an SSH session may write there. The first run, 2026-11-28 04:00, ran the script directly
+and failed on that (`operation not permitted` on the log), so it uploaded nothing. The script now reports an
+unwritable data disk or a lock it cannot create as a failure (exit 1, Slack alert), and a lock older than 6 hours as
+stale, instead of logging "skipped".
 
 ```sh
 # install (or reinstall after editing the plist)

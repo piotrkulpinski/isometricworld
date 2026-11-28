@@ -10,6 +10,7 @@ interface Props { city: string; home?: boolean }
 interface Preview { file: string; lqip: string }
 interface World { files?: Record<string, string>; previews?: Record<string, { land: Preview; port: Preview }> }
 const { city, home = false } = Astro.props;
+const site = siteConfig();
 const c = CITIES[city], region = REGIONS[c.region];
 // map data comes from R2 (same-origin /regions in dev): start its downloads with the HTML, not after the script
 const tilesOrigin = import.meta.env.DEV ? "" : HOSTING.origin;
@@ -24,10 +25,10 @@ async function loadWorld(): Promise<World> {
     return r.ok ? await r.json() : {};
   } catch { return {}; }
 }
-const world = await loadWorld();
-const preload = world.files ? [world.files["tiles-map"], world.files.borders].filter(Boolean) : ["tiles.json", "borders.json"];
+// SITE_LIVE_DATA: nothing from the build's world.json; the preview is filled from the live one below
+const world: World = site.liveData ? {} : await loadWorld();
+const preload = site.liveData ? [] : world.files ? [world.files["tiles-map"], world.files.borders].filter(Boolean) : ["tiles.json", "borders.json"];
 const pv = world.previews?.[city];
-const site = siteConfig();
 const title = home ? site.name : `${c.title} · ${site.name}`;
 const description = home ? (site.home ? site.description : "An isometric city map from open data.") : `${c.title}: an isometric city map from open data.`;
 // crawlers need absolute URLs: site comes from SITE_DOMAIN (astro.config.mjs)
@@ -68,6 +69,18 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), base).href, 
 	<body data-city={city} data-region={c.region}>
 		<div id="map"></div>
 		<div id="corner-buttons"></div>
+		{site.liveData && (
+			/* the same opening view, its files named by the live world.json (inline script below) */
+			<div id="preview" aria-hidden="true" data-world={`${data}/world.json`}>
+				<div class="frame">
+					<div class="lqip"></div>
+					<picture>
+						<source media="(max-aspect-ratio: 5/4)" type="image/avif" />
+						<img alt="" fetchpriority="high" decoding="async" />
+					</picture>
+				</div>
+			</div>
+		)}
 		{pv && (
 			/* the opening view as one image (and a blurred inline version until it loads); map.ts fades it out
 			   once the tiles are in. Laid out like the viewer opens the city: full width, centred vertically. */
@@ -84,6 +97,20 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), base).href, 
 		<script is:inline>
 			// a deep link (#@x,y,z, #metro, ?at=) opens somewhere else: no preview
 			if (/^#(@|metro)/.test(location.hash) || new URLSearchParams(location.search).has("at")) document.getElementById("preview")?.remove();
+			// SITE_LIVE_DATA: the city's preview as the live world.json names it (preloaded above)
+			(() => {
+				const el = document.getElementById("preview"), url = el?.dataset.world;
+				if (!url) return;
+				const base = url.replace(/\/data\/world\.json$/, ""), city = document.body.dataset.city;
+				fetch(url).then((r) => r.json()).then((w) => {
+					const pv = w.previews?.[city];
+					if (!pv || !el.isConnected) return el.remove();
+					el.style.setProperty("--lqip-land", `url(${pv.land.lqip})`);
+					el.style.setProperty("--lqip-port", `url(${pv.port.lqip})`);
+					el.querySelector("source").srcset = `${base}/${pv.port.file}`;
+					el.querySelector("img").src = `${base}/${pv.land.file}`;
+				}).catch(() => el.remove());
+			})();
 		</script>
 		<footer id="credits"></footer>
 		<!-- video mode (?video or V): big credit line above the area social apps cover with their UI -->

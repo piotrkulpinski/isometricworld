@@ -10,8 +10,9 @@
   "assets": {
     "directory": "./web/dist",
     "binding": "ASSETS",
-    // everything else is served straight from assets, without invoking the Worker
-    "run_worker_first": ["/p/*"],
+    // everything else is served straight from assets, without invoking the Worker. /_astro/* runs it too, only so a
+    // missing bundle's 404 is not cached for a year by _headers' immutable rule (worker/index.ts)
+    "run_worker_first": ["/p/*", "/_astro/*"],
     // unknown paths get 404.html, which sends capitalised city links (/Tel-Aviv-Yafo) to /tel-aviv-yafo
     "not_found_handling": "404-page",
     // /tel-aviv-yafo, not /tel-aviv-yafo/

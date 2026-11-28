@@ -11,6 +11,8 @@
  *   SITE_SOURCE=https://github.com/<you>/isometricworld   # the code this site was built from (ODbL: the method)
  *   SITE_ICONS=/sites/isometric-krakow   # folder in web/public with this site's favicon set
  *   SITE_HOME_ONLY=true                  # only `/` (the home city's map): no city pages, every other path 404
+ *   SITE_LIVE_DATA=true                  # pages name no data file or preview: all from the live world.json, so a
+ *                                        # publish without a deploy shows its new preview and preloads nothing stale
  *
  * With SITE_MAKERS set, the map footer shows those lines instead of the region's makers, followed by
  * "Built on Isometric World by Dmytro Krasun".
@@ -44,6 +46,8 @@ export interface Site {
   homeOg: string;
   /** only `/` is built (the home city's map); no /<city> pages */
   homeOnly: boolean;
+  /** pages read data file names and the opening preview from the live world.json, not from the build's */
+  liveData: boolean;
 }
 
 const slug = (t: string) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L")
@@ -62,6 +66,7 @@ export function siteConfig(): Site {
     icons: (e.SITE_ICONS || "").replace(/\/+$/, ""),
     homeOg: name === UPSTREAM.name ? "index" : slug(name),
     homeOnly: /^(1|true|yes)$/i.test(e.SITE_HOME_ONLY ?? ""),
+    liveData: /^(1|true|yes)$/i.test(e.SITE_LIVE_DATA ?? ""),
   };
   if (site.homeOnly && !home) throw new Error("SITE_HOME_ONLY needs SITE_HOME (the city `/` opens)");
   return site;
