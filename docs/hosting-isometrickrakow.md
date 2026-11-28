@@ -139,7 +139,12 @@ would upload without uploading.
 
 The LaunchAgent `com.kulpinski.isometrickrakow-daily-publish` (`scripts/launchd/`) runs it at 04:00 every day
 (the Mini's clock is Europe/Warsaw). It runs the script from the main checkout, `~/Sites/isometricworld`, not from a
-T3 worktree, because the Mini's cleanup job removes `node_modules` from idle worktrees.
+T3 worktree, because the Mini's cleanup job removes `node_modules` from idle worktrees. It runs the script through
+`ssh localhost`: macOS privacy settings keep GUI LaunchAgents (`zsh` and `bash` alike) out of `/Volumes/Storage`,
+where `data/` lives, while an SSH session may write there. The first run, 2026-11-28 04:00, ran the script directly
+and failed on that (`operation not permitted` on the log), so it uploaded nothing. The script now reports an
+unwritable data disk or a lock it cannot create as a failure (exit 1, Slack alert), and a lock older than 6 hours as
+stale, instead of logging "skipped".
 
 ```sh
 # install (or reinstall after editing the plist)

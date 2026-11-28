@@ -5,10 +5,15 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.kulpinski.isometrickrakow-daily-publish</string>
+  <!-- through ssh to localhost: macOS privacy settings keep GUI LaunchAgents (zsh, bash) out of /Volumes/Storage,
+       where data/ lives; an ssh session may write there (key auth, BatchMode: never prompts) -->
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
-    <string>/Users/admin/Sites/isometricworld/scripts/daily-publish-isometrickrakow.sh</string>
+    <string>/usr/bin/ssh</string>
+    <string>-o</string><string>BatchMode=yes</string>
+    <string>-o</string><string>ConnectTimeout=30</string>
+    <string>localhost</string>
+    <string>/bin/zsh /Users/admin/Sites/isometricworld/scripts/daily-publish-isometrickrakow.sh</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
